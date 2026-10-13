@@ -281,6 +281,36 @@ describe("ProviderRegistryService", () => {
     expect(listener).toHaveBeenCalledTimes(2);
   });
 
+  it("Personal 已变化时不因 Account 仍基于旧 Built-in 而继续隐藏新 Provider", async () => {
+    const configSource = new MutableSource(configSnapshot("config-1", "model-a"));
+    const accountSource = new MutableSource(accountSnapshot("account-1", "config-1"));
+    const service = new ProviderRegistryService({ configSource, accountSource });
+    await service.start();
+
+    configSource.current = {
+      ...configSnapshot("config-2", "model-b"),
+      personalRevision: "personal-2",
+      personalProviders: new ProviderConfigMap([
+        [
+          "openai",
+          createApiKeyProviderConfig({
+            apiFormat: "openai-responses",
+            baseURL: "https://proxy.example/v1",
+            apiKey: "test-key",
+            models: ["model-b"],
+          }),
+        ],
+      ]),
+    };
+    const published = await service.refresh("personal-while-account-stale");
+
+    expect(published.config.personalRevision).toBe("personal-2");
+    expect(published.account.basedOnZCodeBuiltinRevision).toBe("config-2");
+    expect(service.listProviders().some((provider) => provider.providerId === "openai")).toBe(
+      true,
+    );
+  });
+
   it("Personal-only revision 变化不等待新的 Account Snapshot", async () => {
     const configSource = new MutableSource(configSnapshot("config-1", "model-a"));
     const accountSource = new MutableSource(accountSnapshot("account-1", "config-1"));

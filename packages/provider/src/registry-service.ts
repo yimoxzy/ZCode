@@ -11,10 +11,11 @@ import {
   type Provider,
   type ProviderModel,
 } from "./resolver.js";
-import type {
-  AccountProviderConfigSnapshot,
-  ProviderConfigSnapshot,
-  ProviderSource,
+import {
+  createFailClosedAccountProviderConfigSnapshot,
+  type AccountProviderConfigSnapshot,
+  type ProviderConfigSnapshot,
+  type ProviderSource,
 } from "./sources.js";
 
 export interface ProviderRegistryServiceSnapshot {
@@ -202,16 +203,26 @@ export class ProviderRegistryService {
       if (generation < this.#requestedGeneration) continue;
       this.#assertNotDisposed();
 
+      let effectiveAccount = account;
       if (account.basedOnZCodeBuiltinRevision !== config.zcodeBuiltinRevision) {
-        // Built-in 已变化但 Account 仍基于旧事实时，继续服务上一份完整 Registry。
-        // 当前 generation 结束；等待 Account Source 的后续 change 再一次性发布最终组合。
-        this.#completedGeneration = generation;
-        if (this.#snapshot) this.#resolveRefreshWaiters(generation, this.#snapshot);
-        reasons.clear();
-        continue;
+        const previous = this.#snapshot;
+        const personalRevisionUnchanged =
+          previous !== null && previous.config.personalRevision === config.personalRevision;
+        if (personalRevisionUnchanged && previous) {
+          // 只有 Built-in 变了、Personal 没变时，才继续服务上一份完整 Registry。
+          // Account 还按旧 Built-in 计算，此时套用它会把账号模型配错。
+          this.#completedGeneration = generation;
+          this.#resolveRefreshWaiters(generation, previous);
+          reasons.clear();
+          continue;
+        }
+        // Personal 已更新，或本进程还没有 Registry。继续守旧快照会把刚同步的
+        // Provider 挡在可执行 Registry 外面，对话侧只能看到 Provider 不存在。
+        // 先用 fail-closed 账号层发布当前配置；Account 追上后再替换成最终组合。
+        effectiveAccount = createFailClosedAccountProviderConfigSnapshot(config);
       }
 
-      if (this.#hasSameSourceRevisions(config, account)) {
+      if (this.#hasSameSourceRevisions(config, effectiveAccount)) {
         this.#completedGeneration = generation;
         this.#resolveRefreshWaiters(generation, this.#snapshot!);
         reasons.clear();
@@ -225,18 +236,18 @@ export class ProviderRegistryService {
           personalProviders: config.personalProviders,
           zcodeBuiltinModelRules: config.zcodeBuiltinModelRules,
           personalModels: config.personalModels,
-          accountProviders: account.providers,
-          accountStates: account.states,
+          accountProviders: effectiveAccount.providers,
+          accountStates: effectiveAccount.states,
           personalProviderOrder: config.personalProviderOrder,
         });
         this.#registry.replace(resolution.registryProviders, [...reasons].join(","));
         const snapshot = Object.freeze({
           sourceRevisions: Object.freeze({
             config: config.revision,
-            account: account.revision,
+            account: effectiveAccount.revision,
           }),
           config: Object.freeze({ ...config }),
-          account: freezeAccountSnapshot(account),
+          account: freezeAccountSnapshot(effectiveAccount),
           resolution,
           registry: this.#registry.getView(),
         });

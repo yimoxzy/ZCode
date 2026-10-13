@@ -6,9 +6,12 @@ import {
   type ProviderProvisioningCredentialEntry,
   type ProviderProvisioningEnvelope,
 } from "@zcode/shared";
-import type {
-  PersonalProviderConfigRepository,
-  ProviderConfigLayerSnapshot,
+import {
+  ProviderConfig,
+  type PersonalProviderConfigRepository,
+  type ProviderConfigLayerSnapshot,
+  type ProviderConfigLayerUpdate,
+  type ProviderTemplateMap,
 } from "@zcode/provider";
 import { decodeProviderConfigFile, encodeProviderConfigFile } from "@zcode/provider-node";
 import {
@@ -39,6 +42,8 @@ export interface ProviderProvisioningSourceOptions {
   readonly credentialFilePath: string;
   readonly personalConfigFilePath: string;
   readonly cipherProvider?: CredentialCipherProvider;
+  /** 本地 Built-in 模板。只用来补齐将要下发的 Personal 镜像，不改本地文件，也不复制整份 Release。 */
+  readonly readProviderTemplates?: () => Promise<ProviderTemplateMap>;
 }
 
 /** 从 Local Environment 读取可 Provision 的事实；不会读取或导出完整 Registry Snapshot。 */
@@ -47,13 +52,18 @@ export function createProviderProvisioningSource(
 ): ProviderProvisioningSource {
   return {
     async read(syncId: string): Promise<ProviderProvisioningEnvelope> {
-      const [personal, settings, credentials] = await Promise.all([
+      const [personal, settings, credentials, templates] = await Promise.all([
         readProvisionablePersonalConfig(options.personalRepository, options.personalConfigFilePath),
         options.settingService.get(),
         readProvisioningCredentials(options.credentialFilePath, options.cipherProvider),
+        options.readProviderTemplates?.() ?? Promise.resolve(undefined),
       ]);
       // 默认与规则来自同一份持锁读取，不能把两次读取的值拼成不存在的配置版本。
-      const personalConfig = encodeProviderConfigFile(personal).config;
+      // 模板型 Provider 在本地文件里往往只有 baseUrl。远端不接收 Built-in Release，
+      // 下发镜像时把模板上的 api 类型和内置模型成员补进这份可丢弃的 Personal 层。
+      const personalConfig = encodeProviderConfigFile(
+        materializeProvisioningPersonalConfig(personal, templates),
+      ).config;
       const accountSettings = {
         providerFamilyDomain: settings.providerFamilyDomain ?? null,
         providerFamilyConnectionSelections: settings.providerFamilyConnectionSelections ?? {},
@@ -152,6 +162,54 @@ function isFileNotFound(error: unknown): boolean {
     "code" in error &&
     (error as { code?: unknown }).code === "ENOENT"
   );
+}
+
+/** 把模板补齐进即将下发的 Personal 层。调用方不得把返回值写回本地权威文件。 */
+export function materializeProvisioningPersonalConfig(
+  personal: ProviderConfigLayerSnapshot,
+  templates: ProviderTemplateMap | undefined,
+): ProviderConfigLayerUpdate {
+  if (!templates) return personal;
+  return {
+    providers: personal.providers.mapConfigs((config, _providerId, rule) => {
+      const templateId = rule.templateId;
+      if (!templateId) return config;
+      const template = templates.get(templateId)?.config;
+      if (!template) return config;
+      const personalModelIds = uniqueIds([
+        ...(config.personalModelIds ?? []),
+        ...(template.builtinModelIds ?? []),
+      ]);
+      const filled = template.overlay(config);
+      // 模板 group / builtinModelIds 不属于 Personal schema，写进镜像会被解码丢掉。
+      // 模型成员改放到 personalModelIds，远端没有该模板时仍然能解析到这些模型。
+      return new ProviderConfig({
+        group: config.group ?? "standard-personal",
+        logo: filled.logo,
+        access: filled.access,
+        api: filled.api,
+        personalModelIds,
+        modelOrder: config.modelOrder ?? filled.modelOrder,
+        visibility: filled.visibility,
+      });
+    }),
+    models: personal.models,
+    providerOrder: personal.providerOrder,
+    ...(personal.defaultModelSelection === undefined
+      ? {}
+      : { defaultModelSelection: personal.defaultModelSelection }),
+  };
+}
+
+function uniqueIds(ids: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const id of ids) {
+    if (seen.has(id)) continue;
+    seen.add(id);
+    result.push(id);
+  }
+  return result;
 }
 
 export function resolveCredentialFilePath(appConfigDir: string): string {

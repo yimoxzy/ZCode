@@ -122,6 +122,12 @@ snapshot、queue、owner/lease 和 `workspaceIdentity` 边界不变。
 不复制 ZCode Built-in Provider/Model Release。远端继续使用自己的 Built-in Release；两端
 候选集差异可能使默认偏好不可用，按上面的 Host 推荐规则处理，不把它当成配置复制失败。
 
+模板型 Personal Provider 在本地权威文件里可以只保存 `baseUrl`、密钥和个人模型。Source 下发
+可丢弃镜像时，用本地 Built-in Template 补齐 `api.type`，并把模板的内置模型 id 并入
+`personalModelIds`。这不回写本地文件，也不复制整份 Release。远端缺少对应模板时，自身已经完整的
+Personal Provider 仍进入可执行 Registry，缺模板只留在诊断里。Target 刷新后如果 Registry 仍停在
+旧的 Personal revision，不能报告 `applied`，并回滚这次写入。
+
 ### 账号连接状态
 
 只同步账号解析需要的窄字段：

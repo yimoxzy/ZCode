@@ -1,7 +1,14 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ModelConfigRules, parsePersonalProviderConfigMap } from "@zcode/provider";
+import {
+  ModelConfigRules,
+  ProviderApiConfig,
+  ProviderConfig,
+  ProviderTemplate,
+  ProviderTemplateMap,
+  parsePersonalProviderConfigMap,
+} from "@zcode/provider";
 import {
   NodePersonalProviderConfigRepository,
   encodeProviderConfigFile,
@@ -102,6 +109,74 @@ describe("Provider Provisioning Source", () => {
     expect(snapshot.credentials.some((entry) => entry.key.endsWith(":identity"))).toBe(false);
     expect(snapshot).not.toHaveProperty("sourceRevision");
     repository.dispose();
+  });
+
+  it("把本地模板的 api 类型和内置模型补进下发镜像，不改本地文件", async () => {
+    const root = await mkdtemp(join(tmpdir(), "zcode-provider-provisioning-source-"));
+    const repository = personalRepository(root);
+    await repository.update(() => ({
+      providers: parsePersonalProviderConfigMap({
+        providerRules: [
+          {
+            providerId: "openai",
+            templateId: "openai",
+            config: {
+              access: { type: "api-key", apiKey: "provider-key" },
+              api: { baseUrl: "https://proxy.example/v1" },
+              personalModelIds: ["gpt-6.1-sol"],
+              modelOrder: ["gpt-5.6", "gpt-6.1-sol"],
+            },
+          },
+        ],
+      }),
+      models: ModelConfigRules.empty(),
+      providerOrder: ["openai"],
+    }));
+    const before = await repository.read();
+    const source = createProviderProvisioningSource({
+      personalRepository: repository,
+      settingService: { get: vi.fn(async () => ({})) } as never,
+      credentialFilePath: join(root, "credentials.json"),
+      personalConfigFilePath: join(root, "provider_config.json"),
+      readProviderTemplates: async () =>
+        new ProviderTemplateMap([
+          [
+            "openai",
+            new ProviderTemplate({
+              templateId: "openai",
+              templateNameMap: {},
+              config: new ProviderConfig({
+                api: new ProviderApiConfig({
+                  type: "openai-responses",
+                  baseUrl: "https://api.openai.com/v1",
+                }),
+                builtinModelIds: ["gpt-5.6"],
+              }),
+            }),
+          ],
+        ]),
+    });
+
+    const snapshot = await source.read("sync-template");
+    const rule = snapshot.personalConfig.providerConfigRules.providerRules[0] as {
+      config: {
+        api?: { type?: string; baseUrl?: string };
+        personalModelIds?: string[];
+        modelOrder?: string[];
+      };
+    };
+    expect(rule.config.api).toEqual({
+      type: "openai-responses",
+      baseUrl: "https://proxy.example/v1",
+    });
+    expect(rule.config.personalModelIds).toEqual(["gpt-6.1-sol", "gpt-5.6"]);
+    expect(rule.config.modelOrder).toEqual(["gpt-5.6", "gpt-6.1-sol"]);
+    expect((await repository.read()).revision).toBe(before.revision);
+    const stored = encodeProviderConfigFile(await repository.read());
+    expect(stored.config.providerConfigRules.providerRules[0]).toMatchObject({
+      config: { api: { baseUrl: "https://proxy.example/v1" } },
+    });
+    expect(JSON.stringify(stored)).not.toContain("openai-responses");
   });
 
   it("does not let malformed non-allowlist credential records block sync", async () => {

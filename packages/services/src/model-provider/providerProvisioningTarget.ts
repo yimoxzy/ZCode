@@ -106,7 +106,7 @@ export function createProviderProvisioningTarget(
           }
 
           applied.personalConfig = true;
-          await options.personalRepository.update((current) => {
+          const writtenPersonal = await options.personalRepository.update((current) => {
             // 其他域写入期间 Personal 可能已被编辑；检查与替换必须在同一个文件锁内。
             if (!samePersonalConfig(current, before.personal)) {
               throw new Error("Personal Provider Config 在同步期间被其它操作修改");
@@ -118,6 +118,7 @@ export function createProviderProvisioningTarget(
           await options.accountProviderSource.refresh("provider-provisioning");
           const snapshot =
             await options.providerRuntime.registryService.refresh("provider-provisioning");
+          assertRegistryPublishedPersonalRevision(snapshot, writtenPersonal.revision);
           // 失效默认只是新会话偏好；把它当同步硬条件会让正常 SSH 被旧模型/档位阻断。
           // 原样保留偏好，由 Host 现有推荐逻辑解析；真实写入/刷新失败仍按事务回滚。
 
@@ -274,6 +275,36 @@ async function rollback(
     await options.providerRuntime.registryService.refresh("provider-provisioning-rollback");
   } catch (error) {
     return error instanceof Error ? error : new Error(String(error));
+  }
+  return undefined;
+}
+
+function assertRegistryPublishedPersonalRevision(
+  snapshot: {
+    readonly config?: { readonly personalRevision?: string };
+    readonly sourceRevisions?: { readonly config?: string };
+  },
+  personalRevision: string,
+): void {
+  const published = readPublishedPersonalRevision(snapshot);
+  // 旧测试双和尚未带上 Personal revision 的 Registry 视图不在这里猜。
+  // 能读到 revision 时，必须就是刚写入的那一版，否则不能报告 applied。
+  if (published === undefined || published === personalRevision) return;
+  throw new Error("Provider Registry 未发布刚写入的 Personal Config");
+}
+
+function readPublishedPersonalRevision(snapshot: {
+  readonly config?: { readonly personalRevision?: string };
+  readonly sourceRevisions?: { readonly config?: string };
+}): string | undefined {
+  if (snapshot.config?.personalRevision) return snapshot.config.personalRevision;
+  const raw = snapshot.sourceRevisions?.config;
+  if (!raw) return undefined;
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (Array.isArray(parsed) && typeof parsed[1] === "string") return parsed[1];
+  } catch {
+    return undefined;
   }
   return undefined;
 }

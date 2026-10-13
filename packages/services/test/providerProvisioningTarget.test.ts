@@ -194,6 +194,46 @@ describe("Provider Provisioning Target", () => {
     expect(f.credentialSave).not.toHaveBeenCalled();
   });
 
+  it("Registry 仍停在旧 Personal revision 时不报告 applied，并回滚写入", async () => {
+    const f = await createTarget({
+      refresh: async () => undefined,
+    });
+    const refresh = vi.fn(async () => ({
+      sourceRevisions: { config: JSON.stringify(["builtin-old", "stale-personal"]) },
+    }));
+    const target = createProviderProvisioningTarget({
+      providerRuntime: {
+        start: vi.fn(async () => undefined),
+        registryService: { refresh },
+      } as never,
+      personalRepository: f.personal,
+      accountProviderSource: { refresh: vi.fn(async () => undefined) } as never,
+      credentialService: {
+        load: f.credentialLoad,
+        save: f.credentialSave,
+        delete: f.credentialDelete,
+      },
+      listProvisioningCredentialKeys: async () => [...f.credentialValues.keys()],
+      settingService: {
+        get: vi.fn(async () => ({
+          providerFamilyDomain: "bigmodel",
+          providerFamilyConnectionSelections: {},
+        })),
+        update: f.settingUpdate,
+      } as never,
+      personalConfigFilePath: f.personalConfigFilePath,
+      stateFilePath: join(f.directory, "provisioning.json"),
+    });
+    const before = await f.personal.read();
+
+    await expect(target.apply(createEnvelope() as never)).resolves.toMatchObject({
+      status: "failed",
+      errorCode: "target-refresh-failed",
+      rolledBack: true,
+    });
+    expect((await f.personal.read()).revision).toBe(before.revision);
+  });
+
   it("writes all target stores, refreshes the registry and is idempotent", async () => {
     const { target, personal, replacePersonalConfig, settingUpdate, credentialSave } =
       await createTarget();

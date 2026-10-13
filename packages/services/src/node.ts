@@ -1450,6 +1450,8 @@ export function createLocalServices(options: {
     settingService,
     credentialFilePath: resolveCredentialFilePath(resolveAppConfigDir()),
     personalConfigFilePath: join(resolveAppConfigDir(), PERSONAL_PROVIDER_CONFIG_FILE_NAME),
+    readProviderTemplates: async () =>
+      (await providerConfigRuntime.configService.read()).zcodeBuiltinProviderTemplates,
   });
   const providerProvisioningDisposers = [
     providerConfigRuntime.configService.onDidChange((reason) => {

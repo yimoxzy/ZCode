@@ -417,6 +417,48 @@ describe("ProviderConfigResolver", () => {
     });
   });
 
+  it("Personal 配置自身已完整时，缺少 Template 不再把 Provider 排除出 Registry", () => {
+    const result = new ProviderConfigResolver().resolve({
+      zcodeBuiltinProviders: ProviderConfigMap.empty(),
+      zcodeBuiltinProviderTemplates: ProviderTemplateMap.empty(),
+      personalProviders: new ProviderConfigMap([
+        {
+          providerId: "openai",
+          templateId: "openai",
+          config: new ProviderConfig({
+            group: "standard-personal",
+            access: new ApiKeyAccessConfig({ apiKey: "test-key" }),
+            api: new ProviderApiConfig({
+              type: "openai-responses",
+              baseUrl: "https://proxy.example/v1",
+            }),
+            personalModelIds: ["gpt-6.1-sol"],
+          }),
+        },
+      ]),
+      zcodeBuiltinModelRules: new ModelConfigRules([
+        { type: "model", modelMatch: ".*", config: completeModelConfig() },
+      ]),
+      personalModels: new ModelConfigRules([
+        {
+          type: "provider-model",
+          providerId: "openai",
+          modelId: "gpt-6.1-sol",
+          config: new ModelConfig({ enabled: true }),
+        },
+      ]),
+      accountProviders: ProviderConfigMap.empty(),
+    });
+
+    expect(result.registryProviders.map((provider) => provider.providerId)).toEqual(["openai"]);
+    expect(result.issues).toContainEqual({
+      code: "missing-template",
+      path: ["providers", "openai", "templateId"],
+      message: "Provider Template 不存在: openai",
+    });
+    expect(result.resolvedProviders[0]?.providerIssues).toEqual([]);
+  });
+
   it("隐藏 Provider 的启用模型仍进入 Registry，禁用模型只保留在 Settings Resolution", () => {
     const result = new ProviderConfigResolver().resolve({
       zcodeBuiltinProviders: new ProviderConfigMap([

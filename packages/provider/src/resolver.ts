@@ -227,11 +227,15 @@ export class ProviderConfigResolver {
       const templateId = rule.templateId ?? undefined;
       const templateConfig = templateId ? providerTemplates?.get(templateId)?.config : undefined;
       if (templateId && !templateConfig) {
-        providerIssues.push({
+        const issue: ConfigValidationIssue = {
           code: "missing-template",
           path: [...providerPath, "templateId"],
           message: `Provider Template 不存在: ${templateId}`,
-        });
+        };
+        // 远端不复制 Built-in Release。Personal 自己已经能通过完整性校验时，
+        // 缺少模板只保留诊断，不能把整个 Provider 从可执行 Registry 里拿掉。
+        if (registryProviderResult.ok) issues.push(issue);
+        else providerIssues.push(issue);
       }
       issues.push(...providerIssues);
       const builtinModelIds = config.builtinModelIds ?? [];
