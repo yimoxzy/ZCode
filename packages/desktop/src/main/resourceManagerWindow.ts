@@ -19,6 +19,7 @@ import { configureNetworkCaptureHost, observeNetworkWindow } from "./resourceMan
 import { normalizeElectronCpuToMachinePercent } from "./electronCpuNormalization.js";
 import type { ChromiumProcessRolePids } from "./processResourceRoleClassifier.js";
 import { buildAuxiliaryRendererName } from "./resourceManagerProcessNames.js";
+import * as resourceManagerBrand from "./resourceManagerBrand.js";
 import {
   forgetHostResourceUsage,
   requestHostResourceUsage,
@@ -33,7 +34,6 @@ import {
  */
 
 const preloadPath = join(import.meta.dirname, "../preload/resourceManager.cjs");
-const RESOURCE_MANAGER_WINDOW_TITLE = "Resource Manager";
 const BROWSER_USE_PLUGIN_NAME = "browser-use";
 
 /** 系统整机 CPU：两次 os.cpus() 之间 busy / total 的差分 */
@@ -265,7 +265,8 @@ export function openResourceManager(): void {
     height: 600,
     minWidth: 640,
     minHeight: 420,
-    title: RESOURCE_MANAGER_WINDOW_TITLE,
+    title: resourceManagerBrand.RESOURCE_MANAGER_WINDOW_TITLE,
+    ...resourceManagerBrand.resourceManagerWindowBrandOptions(),
     // 不继承主窗口的自定义标题栏，使用系统默认标题栏
     backgroundColor: "#1e1e1e",
     webPreferences: {
@@ -276,6 +277,7 @@ export function openResourceManager(): void {
   });
 
   observeNetworkWindow(instance, () => hostProcesses.values());
+  resourceManagerBrand.installResourceManagerWindowBrand(instance);
   // 与主窗口保持一致：生产包始终加载签名包内的渲染资源。
   if (!app.isPackaged && process.env["ELECTRON_RENDERER_URL"]) {
     const base = process.env["ELECTRON_RENDERER_URL"];
@@ -500,6 +502,6 @@ export async function buildResourceUsageSnapshot(
       cpuPercent: Math.round(appTotals.cpuPercent * 10) / 10,
       memoryBytes: appTotals.memoryBytes,
     },
-    processes,
+    processes: resourceManagerBrand.projectResourceManagerProcessBrand(processes),
   };
 }

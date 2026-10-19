@@ -8,6 +8,7 @@ import shareDialogNoiseLightUrl from "@/assets/highspeed/share-dialog-noise-ligh
 import zaiLogoUrl from "@/assets/highspeed/zai-logo.png";
 import { Button } from "@/components/ui/button.js";
 import { ZCodeWordmarkLogo } from "@/components/ui/ZCodeAboutLogo.js";
+import { applicationName } from "@/lib/applicationBrand.js";
 import {
   Dialog,
   DialogClose,
@@ -74,7 +75,11 @@ export function HighspeedShareNoticeCard({
             data-highspeed-card-background="dark"
           />
           <div className="highspeed-sidebar-share-card__content">
-            <div className="highspeed-sidebar-share-card__title" role="img" aria-label="ZCode">
+            <div
+              className="highspeed-sidebar-share-card__title"
+              role="img"
+              aria-label={applicationName}
+            >
               <ZCodeWordmarkLogo className="highspeed-sidebar-share-card__wordmark" />
             </div>
             <Button

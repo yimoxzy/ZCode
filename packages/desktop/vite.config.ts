@@ -1,5 +1,5 @@
 import { createRequire } from "node:module";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, extname, isAbsolute, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { defineConfig, loadEnv, type Plugin } from "vite";
@@ -9,6 +9,7 @@ import { resolveZCodeEndpointOrigin } from "@zcode/shared/zcodeEndpoint";
 import { pdfJsCMapsPlugin } from "../ui/vite/pdfJsCMapsPlugin.js";
 import { getBuildMetadata } from "./scripts/build-metadata.mjs";
 import { resolveDesktopProductFlavor } from "./scripts/desktop-product-identity.mjs";
+import { transformZhiliuRendererHtml } from "./scripts/zhiliu-renderer-branding.mjs";
 
 // 动态加载仓库根的构建工具，避免配置打包后其 import.meta.dirname 被重定位到 desktop。
 // 构建期可选能力（ARMS、事件上报、自动更新），见 docs/desktop/build-time-optional-capabilities.md
@@ -175,6 +176,20 @@ export default defineConfig(({ mode }) => {
   const codingPlanWebviewOrigin =
     env.VITE_CODING_PLAN_WEBVIEW_ORIGIN ?? process.env.VITE_CODING_PLAN_WEBVIEW_ORIGIN ?? "";
   const plugins = [
+    {
+      name: "zhiliu:renderer-branding",
+      transformIndexHtml: {
+        order: "pre" as const,
+        handler: (html: string) =>
+          transformZhiliuRendererHtml(html, {
+            enabled: process.env.ZHILIU_DESKTOP === "1",
+            logoSvg:
+              process.env.ZHILIU_DESKTOP === "1"
+                ? readFileSync(resolve(__dirname, "build/zhiliu/icon.svg"), "utf8")
+                : undefined,
+          }),
+      },
+    },
     ...(e2eCoverageEnabled ? [createE2EUIRendererCoveragePlugin(repoRoot)] : []),
     pdfJsCMapsPlugin(),
     react(),

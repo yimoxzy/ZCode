@@ -54,6 +54,9 @@ const desktopProductIdentity = resolveDesktopProductIdentity({
   ...process.env,
   ZCODE_ENV: builtinProviderConfig.environment,
 });
+// 织流资产保留独立目录；运行时资源仍映射到既有文件名，不覆盖上游构建素材。
+const isZhiliuDesktop = process.env.ZHILIU_DESKTOP === "1";
+const appIconBuildDir = isZhiliuDesktop ? "build/zhiliu" : "build";
 const nativeSearchReleasePlan = resolveNativeSearchReleasePlan({
   platform: targetPlatform.os,
   arch: targetPlatform.arch,
@@ -566,11 +569,17 @@ export default {
   extraMetadata: {
     version: buildMetadata.appVersion,
     zcodeProductFlavor: desktopProductIdentity.flavor,
-    homepage: "https://zcode.z.ai",
-    author: {
-      name: "ZCode",
-      email: "dev@zcode.z.ai",
-    },
+    ...(isZhiliuDesktop
+      ? {
+          productName: desktopProductIdentity.productName,
+          description: "织流 AI Agent 工作台",
+          homepage: "https://github.com/yimoxzy/ZCode",
+          author: { name: "织流" },
+        }
+      : {
+          homepage: "https://zcode.z.ai",
+          author: { name: "ZCode", email: "dev@zcode.z.ai" },
+        }),
   },
   // macOS 签名阶段会对 Electron Framework 下每个语言包逐个 codesign。
   // 默认全量语言会产生大量 locale.pak 签名调用，显著拉长打包时长。
@@ -739,21 +748,21 @@ export default {
     },
     {
       // 应用图标：打包后放入 resources 目录，主进程通过 process.resourcesPath 加载
-      from: "build/icon.png",
+      from: `${appIconBuildDir}/icon.png`,
       to: "icon.png",
     },
     ...(targetPlatform.os === "linux"
       ? [
           {
             // AppImage 用户级 hicolor 图标安装使用真实 512x512 资源，避免目录标称尺寸和 PNG IHDR 不一致。
-            from: "build/icons/512x512.png",
+            from: `${appIconBuildDir}/icons/512x512.png`,
             to: "icon_512x512.png",
           },
         ]
       : []),
     {
       // Windows 独立图标：开发态和打包态都统一走同一套任务栏/窗口图标资源。
-      from: "build/icon_windows.png",
+      from: `${appIconBuildDir}/icon_windows.png`,
       to: "icon_windows.png",
     },
     ...(targetPlatform.os === "win32"
@@ -761,7 +770,7 @@ export default {
           {
             // Windows 托盘图标：Tray 在打包态只能稳定读取 resources 下的独立资源。
             // 这里不复用窗口 PNG，避免通知区域在高 DPI 下退化成模糊缩放图。
-            from: "build/icon.ico",
+            from: `${appIconBuildDir}/icon.ico`,
             to: "tray_icon.ico",
           },
         ]
@@ -821,6 +830,7 @@ export default {
           },
         ],
   mac: {
+    ...(isZhiliuDesktop ? { icon: `${appIconBuildDir}/icon.icns` } : {}),
     target: ["dmg", "zip"],
     category: "public.app-category.developer-tools",
     artifactName: buildDesktopArtifactName("mac"),
@@ -858,6 +868,7 @@ export default {
     ],
   },
   win: {
+    ...(isZhiliuDesktop ? { icon: `${appIconBuildDir}/icon.ico` } : {}),
     target: ["nsis"],
     artifactName: buildDesktopArtifactName("win"),
     signExts: [".node", ".dll"],
@@ -874,6 +885,7 @@ export default {
       : {}),
   },
   linux: {
+    ...(isZhiliuDesktop ? { icon: `${appIconBuildDir}/icons` } : {}),
     target: ["AppImage", "deb", "rpm", "pacman"],
     artifactName: buildDesktopArtifactName("linux"),
     // desktop 包名是 scoped package（@zcode/desktop），electron-builder 默认会把
@@ -882,7 +894,7 @@ export default {
     // 与 /usr/share/icons/hicolor/*/apps/zcode.png 保持一致。
     executableName: desktopProductIdentity.linuxExecutableName,
     category: "Development",
-    maintainer: "ZCode <dev@zcode.z.ai>",
+    maintainer: isZhiliuDesktop ? "织流" : "ZCode <dev@zcode.z.ai>",
   },
   deb: {
     // 生产版与 Preview 必须是两个 dpkg package；只改可执行名仍会让安装器把另一版本当成升级替换。
@@ -915,12 +927,14 @@ export default {
     // 显式放大 DMG 容量，避免拷贝截断导致的“Framework 目录存在但核心文件缺失”。
     size: "3200m",
     // 使用自定义安装背景图。
-    background: "build/dmg_background.png",
+    ...(isZhiliuDesktop
+      ? { backgroundColor: "#F8FAFC" }
+      : { background: "build/dmg_background.png" }),
     // 安装盘图标统一使用安装专用素材，避免复用应用图标导致安装识别度不足。
-    icon: "build/icon_installer.icns",
+    icon: `${appIconBuildDir}/icon_installer.icns`,
     contents: [
       // 实验性调整：为隐藏资源文件显式指定图标坐标，尽量把它们移到角落区域。
-      { x: 640, y: 56, type: "file", path: ".background.tiff" },
+      ...(!isZhiliuDesktop ? [{ x: 640, y: 56, type: "file", path: ".background.tiff" }] : []),
       { x: 640, y: 56, type: "file", path: ".VolumeIcon.icns" },
       { x: 130, y: 220 },
       { x: 410, y: 220, type: "link", path: "/Applications" },
@@ -932,9 +946,9 @@ export default {
     oneClick: false,
     allowToChangeInstallationDirectory: true,
     // Windows 安装流程使用独立安装图标，和应用运行时图标解耦。
-    installerIcon: "build/icon_installer.ico",
-    uninstallerIcon: "build/icon_installer.ico",
-    installerHeaderIcon: "build/icon_installer.ico",
+    installerIcon: `${appIconBuildDir}/icon_installer.ico`,
+    uninstallerIcon: `${appIconBuildDir}/icon_installer.ico`,
+    installerHeaderIcon: `${appIconBuildDir}/icon_installer.ico`,
   },
   detectUpdateChannel: false,
   publish: {

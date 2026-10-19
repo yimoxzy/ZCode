@@ -19,7 +19,10 @@ import { join } from "node:path";
 import type { PluginSandboxRecord, PluginSandboxRegistryPort } from "./contract.js";
 import { attachPluginSandboxGuest, configurePluginSandboxGuest } from "./guestPolicy.js";
 import { createPluginSandboxPermissionGate } from "./permissionGate.js";
-import { formatPluginSandboxPermissionDialogText } from "./permissions.js";
+import {
+  DEFAULT_PLUGIN_SANDBOX_SERVER_NAME,
+  formatPluginSandboxPermissionDialogText,
+} from "./permissions.js";
 import type { PluginSandboxAssetSource } from "./protocol.js";
 import { createPluginSandboxRegistry } from "./registry.js";
 import { preparePluginSandboxSession } from "./session.js";
@@ -124,7 +127,10 @@ export function installPluginSandboxHost(input: {
     registry,
     async prompt({ record, permissions: pending }) {
       const text = formatPluginSandboxPermissionDialogText(
-        { serverName: record.serverName ?? "ZCode Gen UI", permissions: pending },
+        {
+          serverName: record.serverName ?? DEFAULT_PLUGIN_SANDBOX_SERVER_NAME,
+          permissions: pending,
+        },
         resolveLocale(),
       );
       const owner = electronWebContents.fromId(record.ownerWebContentsId);

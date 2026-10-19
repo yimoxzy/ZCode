@@ -1,7 +1,9 @@
+// @vitest-environment jsdom
 import { createElement } from "react";
 import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vitest";
+import { cleanup, render } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/i18n/IntlProvider.js", () => ({
   useZCodeIntl: () => ({
@@ -25,6 +27,7 @@ const capturedWindowsCaptionMenu = vi.hoisted(() => {
   };
 
   return {
+    zhiliu: false,
     screenshot,
     menuItems: [] as Array<{
       label: string;
@@ -36,8 +39,18 @@ const capturedWindowsCaptionMenu = vi.hoisted(() => {
     exportLogs: vi.fn(async () => ({ success: true })),
     captureWindowScreenshot: vi.fn(async () => screenshot),
     executeDesktopCommand: vi.fn(async () => undefined),
+    canOpenCommunity: vi.fn(async () => true),
+    getUpdateState: vi.fn(),
+    openInFileManager: vi.fn(async () => ({ success: true })),
   };
 });
+
+vi.mock("@zcode/shared", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@zcode/shared")>()),
+  get ZHILIU_DESKTOP_ENABLED() {
+    return capturedWindowsCaptionMenu.zhiliu;
+  },
+}));
 
 vi.mock("@/components/ui/dropdown-menu.js", () => ({
   DropdownMenu: ({ children }: { children: ReactNode }) => createElement("div", null, children),
@@ -96,15 +109,14 @@ vi.mock("@/feedback/feedbackStore.js", () => ({
 }));
 
 vi.mock("@/hooks/usePlatform.js", () => ({
-  usePlatform: () => ({
-    canOpenCommunity: vi.fn(async () => false),
-    captureWindowScreenshot: capturedWindowsCaptionMenu.captureWindowScreenshot,
-    executeDesktopCommand: capturedWindowsCaptionMenu.executeDesktopCommand,
-    exportLogs: capturedWindowsCaptionMenu.exportLogs,
-    openExternal: capturedWindowsCaptionMenu.openExternal,
-    openInFileManager: vi.fn(async () => ({ success: true })),
-  }),
+  usePlatform: () => capturedWindowsCaptionMenu,
 }));
+
+beforeEach(() => {
+  capturedWindowsCaptionMenu.zhiliu = false;
+  vi.clearAllMocks();
+});
+afterEach(cleanup);
 
 describe("WindowsCaptionMenuButton", () => {
   async function renderButton(
@@ -225,5 +237,44 @@ describe("WindowsCaptionMenuButton", () => {
       align: "end",
       alignOffset: -12,
     });
+  });
+
+  it("keeps local support actions without querying or exposing upstream services in Zhiliu", async () => {
+    capturedWindowsCaptionMenu.zhiliu = true;
+    capturedWindowsCaptionMenu.menuItems = [];
+    const { WindowsCaptionMenuButton } = await import("@/WindowsCaptionMenuButton.js");
+    const { ServiceProvider } = await import("@/hooks/useServices.js");
+    const { createSettingsTestServices } = await import("./lib/settingsTestServices.js");
+    const { container } = render(
+      createElement(
+        ServiceProvider,
+        { services: createSettingsTestServices() },
+        createElement(WindowsCaptionMenuButton, {
+          workspaceAbsPath: "/workspace",
+          onCreateTask: vi.fn(),
+          onOpenWorkspace: vi.fn(),
+          onToggleBrowser: vi.fn(),
+          onToggleTerminal: vi.fn(),
+        }),
+      ),
+    );
+
+    const html = container.innerHTML;
+    for (const label of [
+      "titleBar.menu.help.feedback",
+      "workspaceHeader.help.productRequest",
+      "sidebar.menu.community",
+      "workspaceHeader.help.docs",
+      "titleBar.menu.help.checkForUpdates",
+    ]) {
+      expect(html).not.toContain(label);
+    }
+    expect(html).toContain("titleBar.menu.help.about");
+    expect(html).toContain("titleBar.menu.help.resourceManager");
+    expect(html).toContain("titleBar.menu.help.exportLogs");
+    expect(capturedWindowsCaptionMenu.canOpenCommunity).not.toHaveBeenCalled();
+    expect(capturedWindowsCaptionMenu.getUpdateState).not.toHaveBeenCalled();
+    expect(capturedWindowsCaptionMenu.openExternal).not.toHaveBeenCalled();
+    expect(capturedWindowsCaptionMenu.openSubmit).not.toHaveBeenCalled();
   });
 });

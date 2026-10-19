@@ -1,4 +1,5 @@
 import { DEFAULT_LOCALE, type Locale } from "./protocol.js";
+import { ZHILIU_DESKTOP_ENABLED } from "./env.js";
 
 export const desktopMenuMessageIds = {
   file: "titleBar.menu.file",
@@ -167,7 +168,7 @@ export const desktopMenuMessages: Record<Locale, DesktopMenuLocaleMessages> = {
 
 export function getDesktopMenuMessage(locale: Locale, id: DesktopMenuMessageId): string {
   const messages = desktopMenuMessages[locale] ?? desktopMenuMessages[DEFAULT_LOCALE];
-  return messages[id];
+  return ZHILIU_DESKTOP_ENABLED ? messages[id].replaceAll("ZCode", "织流") : messages[id];
 }
 
 export function formatDesktopMenuMessage(

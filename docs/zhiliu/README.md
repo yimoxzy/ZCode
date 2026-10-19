@@ -24,7 +24,7 @@
 3. 设备授权、本地历史显式共享、离线补偿、远程审批及撤权待验收。当前云窗口没有本地设备工具桥。
 4. 开源 Computer Use producer 为占位实现；不能宣称已有完整电脑控制或操作系统沙箱。
 5. 云登录使用 SaaS 当前 sessionStorage，关闭窗口后需要重新登录；本版不复制登录 Token 到本地 Host。
-6. 初版沿用部分 ZCode 本地界面与图标，已跳过上游职业/供应商首启引导；完整织流视觉、平台首次使用引导和无障碍细节后续迭代。
+6. 应用图标、启动标识、菜单及窗口品牌已统一为织流，保留第三方供应商图标与开源署名。工作台布局沿用上游结构；平台首次使用引导和无障碍细节后续迭代。
 7. 当前构建和安装验证目标是 Windows x64，macOS/Linux 尚未做整包验收；远端 SSH/WSL/Docker 所需跨平台运行时不在本轮包中验证。
 8. 云端录音/屏幕共享等浏览器系统权限当前关闭；附件上传不受这一限制。
 
@@ -49,8 +49,7 @@ pnpm build:zhiliu-desktop -- --os win --arch x64
 pnpm typecheck
 pnpm lint
 pnpm architecture:check --changed
-$zhiliuTests = @(rg --files packages/desktop/test packages/services/test packages/ui/test | Where-Object { $_ -match '(^|[\\/])zhiliu[^\\/]*\.test\.ts$' })
-pnpm exec vitest run $zhiliuTests
+pnpm exec vitest run test/zhiliu
 node packages/desktop/scripts/zhiliu-cloud-window-smoke.mjs
 node packages/desktop/scripts/zhiliu-desktop-edition-smoke.mjs
 ```

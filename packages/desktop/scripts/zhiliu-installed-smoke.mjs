@@ -67,6 +67,21 @@ try {
   await local.getByTestId("root-startup-loading").waitFor({ state: "hidden", timeout: 60_000 });
   await local.getByTestId("zhiliu-cloud-access-notice").first().waitFor();
   assert.equal(await local.locator('input[type="password"]').count(), 0);
+  assert.equal(await local.title(), "织流");
+  const brandMarks = local.getByRole("img", { name: "织流", exact: true });
+  assert.ok((await brandMarks.count()) > 0);
+  assert.ok(
+    await brandMarks.evaluateAll((marks) =>
+      marks.every((mark) => mark.complete && mark.naturalWidth > 0),
+    ),
+  );
+  assert.equal(await local.getByText("ZCode", { exact: true }).count(), 0);
+  if (process.env.ZHILIU_SMOKE_SCREENSHOT) {
+    await local.screenshot({ path: `${process.env.ZHILIU_SMOKE_SCREENSHOT}.local.png` });
+    await local.emulateMedia({ colorScheme: "dark" });
+    await local.screenshot({ path: `${process.env.ZHILIU_SMOKE_SCREENSHOT}.dark.png` });
+    await local.emulateMedia({ colorScheme: "light" });
+  }
   const [cloud] = await Promise.all([
     context.waitForEvent("page", { timeout: 30_000 }),
     local.getByTestId("zhiliu-open-cloud").click(),
@@ -75,6 +90,7 @@ try {
     "installed startup without Main Inspector",
     "platform login entry",
     "no personal model/key form",
+    "Zhiliu title and loaded platform brand marks",
   ];
   let readiness;
   if (live) {

@@ -9,6 +9,7 @@ import {
 
 export interface OpenZhiliuCloudWindowOptions {
   cloudUrl: string | undefined;
+  iconPath?: string;
   parent?: BrowserWindow | null;
   logger?: { warn: (...args: unknown[]) => void };
 }
@@ -59,6 +60,7 @@ export async function openZhiliuCloudWindow(
     minWidth: 760,
     minHeight: 560,
     title: "织流 · 云 Agent",
+    ...(options.iconPath ? { icon: options.iconPath } : {}),
     show: false,
     autoHideMenuBar: true,
     ...(options.parent && !options.parent.isDestroyed() ? { parent: options.parent } : {}),

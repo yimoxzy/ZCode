@@ -6,6 +6,7 @@ import type { BroadcastMessage, IBroadcastService, ISettingService } from "@zcod
 import { readNavigatorLanguage, readSafeLocalStorage, writeSafeLocalStorage } from "@/lib/browserEnvironment.js";
 import zhCN from "./locales/zh-CN.js";
 import enUS from "./locales/en-US.js";
+import { resolveApplicationMessage } from "./applicationMessages.js";
 
 /** 语言 → 翻译消息映射 */
 const MESSAGES: Record<Locale, Record<string, string>> = {
@@ -106,7 +107,7 @@ function createIntl(locale: Locale): IntlInstance {
   const messages = MESSAGES[locale] ?? MESSAGES[DEFAULT_LOCALE]!;
   return {
     formatMessage({ id }, values) {
-      let msg = messages[id] ?? id;
+      let msg = resolveApplicationMessage(locale, id, messages[id] ?? id);
       if (values) {
         for (const [key, val] of Object.entries(values)) {
           msg = msg.replaceAll(`{${key}}`, String(val));

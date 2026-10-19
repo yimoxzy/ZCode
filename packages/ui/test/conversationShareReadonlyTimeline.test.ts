@@ -1,7 +1,15 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ConversationShareReadonlyTimeline } from "@/v4/ConversationShareReadonlyTimeline.js";
+
+const edition = vi.hoisted(() => ({ zhiliu: false }));
+vi.mock("@zcode/shared", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@zcode/shared")>()),
+  get ZHILIU_DESKTOP_ENABLED() {
+    return edition.zhiliu;
+  },
+}));
 
 // SG-01 注入边界：时间线不再静态 import OpenSplitButton（避免 open-with 子树进公开页 bundle），
 // 改由消费方通过 artifactOpenAction 注入；测试用 stub 组件验证同一注入契约。
@@ -94,8 +102,26 @@ const buildArtifactRow = (rowId: number, artifactVersionId: string) => ({
 
 describe("ConversationShareReadonlyTimeline", () => {
   beforeEach(() => {
+    edition.zhiliu = false;
     openActionProps.values = [];
   });
+
+  it.each(["zh-CN", "en-US"] as const)(
+    "brands unsupported-content notices without a Desktop host in %s",
+    (locale) => {
+      edition.zhiliu = true;
+      const html = renderToStaticMarkup(
+        createElement(ConversationShareReadonlyTimeline, {
+          rows: [],
+          locale,
+          unsupportedRowCount: 1,
+        }),
+      );
+      expect(html).toContain('data-conversation-share-unsupported-notice="true"');
+      expect(html).toContain(locale === "zh-CN" ? "织流" : "Zhiliu");
+      expect(html).not.toContain("ZCode");
+    },
+  );
 
   it("uses Desktop user bubble, assistant markdown, turn grouping, and tool summary", () => {
     const html = renderToStaticMarkup(

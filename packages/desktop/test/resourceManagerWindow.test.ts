@@ -15,6 +15,14 @@ const fromWebContents = vi.fn();
 const cpus = vi.fn();
 const totalmem = vi.fn();
 const freemem = vi.fn();
+const brandEnvironment = vi.hoisted(() => ({ managed: false }));
+
+vi.mock("../../shared/src/env.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../shared/src/env.js")>()),
+  get ZHILIU_DESKTOP_ENABLED() {
+    return brandEnvironment.managed;
+  },
+}));
 
 vi.mock("electron", () => ({
   app: { getAppMetrics },
@@ -60,6 +68,7 @@ async function loadModule() {
 describe("resourceManagerWindow", () => {
   beforeEach(() => {
     vi.resetModules();
+    brandEnvironment.managed = false;
     getAppMetrics.mockReset();
     getAllWindows.mockReset();
     getAllWebContents.mockReset();
@@ -73,6 +82,24 @@ describe("resourceManagerWindow", () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.unstubAllEnvs();
+  });
+
+  it("织流仅替换资源列表展示品牌，保留进程ID、分组及指标", async () => {
+    brandEnvironment.managed = true;
+    getAppMetrics.mockReturnValue([createMetric(process.pid, "Browser", 1, 100)]);
+    getAllWindows.mockReturnValue([]);
+    getAllWebContents.mockReturnValue([]);
+    const module = await loadModule();
+    const snapshot = await module.buildResourceUsageSnapshot({ includeHosts: false });
+    expect(snapshot.processes).toEqual([
+      expect.objectContaining({
+        pid: process.pid,
+        name: "zhiliu-main",
+        category: "base",
+        groupKey: "main",
+        memoryBytes: 100 * 1024,
+      }),
+    ]);
   });
 
   it("Electron 自身进程全部归基础服务，browser-use guest renderer 归内置插件", async () => {
@@ -293,9 +320,8 @@ describe("resourceManagerWindow", () => {
 
   it("linux 上 Electron 单核口径的 CPU 会除以逻辑核数；其它平台原样", async () => {
     // 归一化函数已提升为资源管理器 UI 与 ARMS 资源遥测共用，断言跟随实现搬到共用模块。
-    const { normalizeElectronCpuToMachinePercent } = await import(
-      "../src/main/electronCpuNormalization.js"
-    );
+    const { normalizeElectronCpuToMachinePercent } =
+      await import("../src/main/electronCpuNormalization.js");
     expect(
       normalizeElectronCpuToMachinePercent(40, { platform: "linux", logicalCpuCount: 8 }),
     ).toBe(5);

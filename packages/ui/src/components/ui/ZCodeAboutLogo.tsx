@@ -1,6 +1,11 @@
 import { cn } from "@/components/lib/utils.js";
+import { ZHILIU_DESKTOP_ENABLED } from "@zcode/shared";
+import { ApplicationBrandMark } from "@/components/ui/ApplicationBrandMark.js";
 
 export function ZCodeAboutLogo({ className }: { className?: string }) {
+  if (ZHILIU_DESKTOP_ENABLED) {
+    return <ApplicationBrandMark className={className} />;
+  }
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"
@@ -26,6 +31,9 @@ export function ZCodeAboutLogo({ className }: { className?: string }) {
 }
 
 export function ZCodeWordmarkLogo({ className }: { className?: string }) {
+  if (ZHILIU_DESKTOP_ENABLED) {
+    return <span className={cn("shrink-0 font-semibold text-current", className)}>织流</span>;
+  }
   return (
     <svg
       width="244"

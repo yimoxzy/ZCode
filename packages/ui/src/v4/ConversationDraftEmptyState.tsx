@@ -12,6 +12,8 @@ import {
   useState,
 } from "react";
 import darkEmptyStateLogoUrl from "@/assets/Z.svg";
+import { ZHILIU_DESKTOP_ENABLED } from "@zcode/shared";
+import { ApplicationBrandMark } from "@/components/ui/ApplicationBrandMark.js";
 import { cn } from "@/components/lib/utils.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { useIsOfficeMode } from "@/hooks/useInterfaceMode.js";
@@ -242,6 +244,9 @@ export function ConversationDraftEmptyState({
 }
 
 function ZCodeEmptyStateLogo({ className }: { className?: string }) {
+  if (ZHILIU_DESKTOP_ENABLED) {
+    return <ApplicationBrandMark className={cn(className, "object-contain opacity-10")} />;
+  }
   return (
     <>
       {/* 修复原因：夜间资源已自带渐变和透明度，公共容器叠加遮罩会让它重复变淡；渐隐效果只属于浅色线框。 */}

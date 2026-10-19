@@ -5,6 +5,7 @@ import {
   desktopMenuMessageIds,
   getDesktopMenuMessage,
   ZCODE_PRODUCT_FLAVOR,
+  ZHILIU_DESKTOP_ENABLED,
   type DesktopCommandId,
   type Locale,
 } from "@zcode/shared";
@@ -13,16 +14,17 @@ let desktopTray: Tray | null = null;
 let rebuildDesktopTrayContextMenu: (() => void) | null = null;
 
 export function resolveDesktopTrayIconPath(platform: NodeJS.Platform = process.platform) {
+  const developmentIconDir = ZHILIU_DESKTOP_ENABLED ? "../../build/zhiliu" : "../../build";
   // Linux 托盘只接受 PNG（.ico 不会渲染）；打包态 icon.png 已由 extraResources 无条件放入
   // resources 目录（electron-builder.config.js），Windows 继续用独立托盘 .ico 避免高 DPI 模糊。
   if (platform === "linux") {
     return app.isPackaged
       ? join(process.resourcesPath, "icon.png")
-      : join(import.meta.dirname, "../../build/icon.png");
+      : join(import.meta.dirname, developmentIconDir, "icon.png");
   }
   return app.isPackaged
     ? join(process.resourcesPath, "tray_icon.ico")
-    : join(import.meta.dirname, "../../build/icon.ico");
+    : join(import.meta.dirname, developmentIconDir, "icon.ico");
 }
 
 export function createDesktopTray(options: {
@@ -83,8 +85,8 @@ export function createDesktopTray(options: {
           click: () => executeTrayCommand(DesktopCommandIds.OpenWorkspace),
         },
         { type: "separator" },
-        // 更新入口跟随产品身份：Preview（含生产后端的 Preview）禁用更新器，托盘也不能露出入口。
-        ...(ZCODE_PRODUCT_FLAVOR === "production"
+        // 织流尚未接入独立更新源；Preview 也禁用更新器，两者托盘均不露出入口。
+        ...(!ZHILIU_DESKTOP_ENABLED && ZCODE_PRODUCT_FLAVOR === "production"
           ? [
               {
                 label: getLabel(desktopMenuMessageIds.helpCheckForUpdates),

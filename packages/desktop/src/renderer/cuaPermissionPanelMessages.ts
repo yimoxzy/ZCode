@@ -1,4 +1,5 @@
 import type { CuaPermissionKind, Locale } from "@zcode/shared";
+import { ZHILIU_DESKTOP_ENABLED } from "@zcode/shared";
 
 export interface CuaPermissionPanelMessages {
   documentTitle: string;
@@ -39,7 +40,9 @@ export function resolveCuaPermissionPanelMessages(
 ): CuaPermissionPanelMessages {
   const messages = MESSAGES[locale];
   return {
-    documentTitle: messages.documentTitle,
+    documentTitle: ZHILIU_DESKTOP_ENABLED
+      ? messages.documentTitle.replaceAll("ZCode", "织流")
+      : messages.documentTitle,
     dragTitle: messages.dragTitle,
     hintPrefix: messages.hintPrefix,
     permissionLabel: messages[permission],

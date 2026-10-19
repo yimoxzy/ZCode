@@ -1,6 +1,7 @@
 import type { McpAppsResourcePermission } from "@zcode/shared/mcp-apps";
 import type { PluginSandboxRecord, PluginSandboxRegistryPort } from "./contract.js";
 import {
+  DEFAULT_PLUGIN_SANDBOX_SERVER_NAME,
   decidePluginSandboxPermission,
   isPluginSandboxPermissionGranted,
   resolvePluginSandboxCheckedPermission,
@@ -109,7 +110,7 @@ export function createPluginSandboxPermissionGate(deps: {
               allowed = allowed && valid();
               deps.logger?.info?.("[plugin-sandbox] permission prompt settled", {
                 sandboxId: record.sandboxId,
-                serverName: record.serverName ?? "ZCode Gen UI",
+                serverName: record.serverName ?? DEFAULT_PLUGIN_SANDBOX_SERVER_NAME,
                 permissions: pending,
                 allowed,
               });

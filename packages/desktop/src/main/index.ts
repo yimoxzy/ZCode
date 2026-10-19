@@ -308,19 +308,24 @@ process.on("unhandledRejection", (reason) => {
   logger.error("unhandledRejection:", reason);
 });
 
+const developmentIconRoot = join(
+  import.meta.dirname,
+  "../../build",
+  ...(ZHILIU_DESKTOP_ENABLED ? ["zhiliu"] : []),
+);
 const iconPath =
   process.platform === "win32"
     ? app.isPackaged
       ? join(process.resourcesPath, "icon_windows.png")
-      : join(import.meta.dirname, "../../build/icon_windows.png")
+      : join(developmentIconRoot, "icon_windows.png")
     : app.isPackaged
       ? join(process.resourcesPath, "icon.png")
-      : join(import.meta.dirname, "../../build/icon.png");
+      : join(developmentIconRoot, "icon.png");
 const linuxDesktopIntegrationIconPath =
   process.platform === "linux"
     ? app.isPackaged
       ? join(process.resourcesPath, "icon_512x512.png")
-      : join(import.meta.dirname, "../../build/icons/512x512.png")
+      : join(developmentIconRoot, "icons/512x512.png")
     : iconPath;
 let currentApplicationLocale: Locale = DEFAULT_LOCALE;
 let closeToTrayOnWindows = true;
@@ -1504,6 +1509,7 @@ async function executeDesktopCommandForApp(
     try {
       await openZhiliuCloudWindow({
         cloudUrl: process.env.ZHILIU_CLOUD_URL?.trim() || ZHILIU_CLOUD_URL,
+        iconPath,
         logger,
       });
       return { opened: true };
@@ -1523,8 +1529,9 @@ async function executeDesktopCommandForApp(
       await dialog.showMessageBox({
         title: "关于织流",
         message: `织流桌面技术版 ${ZCODE_VERSION}`,
+        icon: nativeImage.createFromPath(iconPath),
         detail:
-          "基于 ZCode 开源项目构建。云 Agent 使用织流平台账号和积分；本地项目使用自有模型 Key。保留上游 Apache-2.0 许可与第三方声明。",
+          "云 Agent 使用织流平台账号和积分，模型由平台统一管理。本地 Agent 将在平台授权与计费网关接通后开放。\n\n基于 ZCode 开源项目构建，保留上游 Apache-2.0 许可与第三方声明。",
       });
       return;
     }

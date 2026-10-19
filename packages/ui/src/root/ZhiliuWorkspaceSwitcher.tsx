@@ -2,6 +2,7 @@ import { Cloud, FolderOpen } from "lucide-react";
 import { Button } from "@/components/ui/button.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { useOpenZhiliuCloud } from "@/hooks/useOpenZhiliuCloud.js";
+import { ApplicationBrandMark } from "@/components/ui/ApplicationBrandMark.js";
 
 /** 导航条占用正常布局；云账号保留在独立工作台，不读取本地 OAuth 凭据。 */
 export function ZhiliuWorkspaceSwitcher({ onOpenLocal }: { onOpenLocal: () => void }) {
@@ -15,6 +16,7 @@ export function ZhiliuWorkspaceSwitcher({ onOpenLocal }: { onOpenLocal: () => vo
       data-testid="zhiliu-workspace-switcher"
       className="flex min-h-11 shrink-0 items-center gap-2 border-b border-border bg-header px-3 py-1.5 text-ui-base text-foreground platform-macos-desktop:pl-20 platform-windows-desktop:pr-36 platform-linux-desktop:pr-36 [app-region:drag]"
     >
+      <ApplicationBrandMark className="size-5" />
       <span className="mr-1 font-medium">{chinese ? "织流" : "Zhiliu"}</span>
       <Button
         variant="outline"

@@ -1,4 +1,4 @@
-import { DesktopCommandIds } from "@zcode/shared";
+import { DesktopCommandIds, ZHILIU_DESKTOP_ENABLED } from "@zcode/shared";
 import type { UpdateStatePayload } from "@zcode/shared";
 import { useCallback, useEffect, useState } from "react";
 import { useFeedbackStore } from "@/feedback/feedbackStore.js";
@@ -71,7 +71,7 @@ export function WindowsCaptionMenuButton({
     visible: false,
   });
   const [showCommunityMenuItem, setShowCommunityMenuItem] = useState(false);
-  const showDesktopUpdateEntry = shouldShowDesktopUpdateEntry();
+  const showDesktopUpdateEntry = !ZHILIU_DESKTOP_ENABLED && shouldShowDesktopUpdateEntry();
 
   const syncUpdateState = useCallback(async () => {
     if (!platform.getUpdateState) {
@@ -114,6 +114,10 @@ export function WindowsCaptionMenuButton({
   }, [platform, showDesktopUpdateEntry, syncStdioTapDevState, syncUpdateState]);
 
   useEffect(() => {
+    // 织流未接入上游社区，隐藏入口时也不能发起上游配置查询。
+    if (ZHILIU_DESKTOP_ENABLED) {
+      return;
+    }
     let isCancelled = false;
 
     void platform.canOpenCommunity(locale).then(
@@ -262,22 +266,26 @@ export function WindowsCaptionMenuButton({
           {intl.formatMessage({ id: "titleBar.menu.help.resourceManager" })}
         </DropdownMenuItem>
         <DropdownMenuSeparator />
-        <DropdownMenuItem onSelect={helpMenuActions.openIssueReport}>
-          {intl.formatMessage({ id: "titleBar.menu.help.feedback" })}
-        </DropdownMenuItem>
-        <DropdownMenuItem onSelect={openFeatureRequest}>
-          {intl.formatMessage({ id: "workspaceHeader.help.productRequest" })}
-        </DropdownMenuItem>
-        {showCommunityMenuItem ? (
-          <DropdownMenuItem
-            onSelect={() => handleExecuteDesktopCommand(DesktopCommandIds.OpenCommunity)}
-          >
-            {intl.formatMessage({ id: "sidebar.menu.community" })}
-          </DropdownMenuItem>
+        {!ZHILIU_DESKTOP_ENABLED ? (
+          <>
+            <DropdownMenuItem onSelect={helpMenuActions.openIssueReport}>
+              {intl.formatMessage({ id: "titleBar.menu.help.feedback" })}
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={openFeatureRequest}>
+              {intl.formatMessage({ id: "workspaceHeader.help.productRequest" })}
+            </DropdownMenuItem>
+            {showCommunityMenuItem ? (
+              <DropdownMenuItem
+                onSelect={() => handleExecuteDesktopCommand(DesktopCommandIds.OpenCommunity)}
+              >
+                {intl.formatMessage({ id: "sidebar.menu.community" })}
+              </DropdownMenuItem>
+            ) : null}
+            <DropdownMenuItem onSelect={helpMenuActions.openProductDocs}>
+              {intl.formatMessage({ id: "workspaceHeader.help.docs" })}
+            </DropdownMenuItem>
+          </>
         ) : null}
-        <DropdownMenuItem onSelect={helpMenuActions.openProductDocs}>
-          {intl.formatMessage({ id: "workspaceHeader.help.docs" })}
-        </DropdownMenuItem>
         <DropdownMenuItem onSelect={helpMenuActions.exportLogs}>
           {intl.formatMessage({ id: "titleBar.menu.help.exportLogs" })}
         </DropdownMenuItem>

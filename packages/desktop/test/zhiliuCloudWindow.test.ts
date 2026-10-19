@@ -64,7 +64,14 @@ afterEach(() => {
 
 describe("织流云窗口生命周期与事件边界", () => {
   it("云窗口没有本地权限，登录和数据不通过主 React renderer", async () => {
-    const win = await openZhiliuCloudWindow({ cloudUrl: "https://one.example.com" });
+    const win = await openZhiliuCloudWindow({
+      cloudUrl: "https://one.example.com",
+      iconPath: "/trusted/application/icon.png",
+    });
+    expect((win as FakeWindow).options).toMatchObject({
+      title: "织流 · 云 Agent",
+      icon: "/trusted/application/icon.png",
+    });
     const preferences = (win as FakeWindow).options.webPreferences;
     expect(preferences).toMatchObject({
       sandbox: true,
