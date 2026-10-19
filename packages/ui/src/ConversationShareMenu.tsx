@@ -1,4 +1,5 @@
 import { ShareIcon } from "lucide-react";
+import { ZHILIU_DESKTOP_ENABLED } from "@zcode/shared";
 import { ControlHintTooltip } from "@/ControlHintTooltip.js";
 import { cn } from "@/components/lib/utils.js";
 import { Button } from "@/components/ui/button.js";
@@ -24,6 +25,9 @@ export function ConversationShareMenu({
   const active = useConversationShareSelectionStore(
     (state) => state.drafts[taskId]?.scope === "partial",
   );
+
+  // 上游分享会上传会话和附件；织流未接自有分享服务前不提供该入口。
+  if (ZHILIU_DESKTOP_ENABLED) return null;
 
   const handleClick = () => {
     const currentState = useConversationShareSelectionStore.getState();

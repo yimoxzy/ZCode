@@ -11,6 +11,15 @@ declare const __ZCODE_PRODUCT_FLAVOR__: string;
 declare const __ZCODE_ARMS_RUM_ENDPOINT__: string;
 declare const __ZCODE_TELEMETRY_REPORT_ENDPOINT__: string;
 declare const __ZCODE_AUTO_UPDATE_ENABLED__: boolean;
+declare const __ZHILIU_DESKTOP_ENABLED__: boolean;
+declare const __ZHILIU_CLOUD_URL__: string;
+
+/** 织流 fork 身份；普通上游构建和未注入 define 的测试保持原行为。 */
+export const ZHILIU_DESKTOP_ENABLED: boolean =
+  typeof __ZHILIU_DESKTOP_ENABLED__ !== "undefined" ? __ZHILIU_DESKTOP_ENABLED__ : false;
+/** 仅作为织流云工作台入口默认值，不替换模型、OAuth 或远控服务端点。 */
+export const ZHILIU_CLOUD_URL: string =
+  typeof __ZHILIU_CLOUD_URL__ !== "undefined" ? __ZHILIU_CLOUD_URL__ : "";
 
 export function normalizeZCodeEnv(value: string | undefined): ZCodeEnv {
   return value?.trim().toLowerCase() === "production" ? "production" : "test";
@@ -49,7 +58,7 @@ export const RUNTIME_ZCODE_DEBUG =
   typeof process !== "undefined" ? process.env.ZCODE_DEBUG : undefined;
 
 // ── 构建期可选能力（见 docs/desktop/build-time-optional-capabilities.md），未注入时一律关闭 ──
-/** ARMS RUM 上报地址；为空时 SDK 以 enable=false 初始化，不产生上报。 */
+/** ARMS RUM 上报地址；为空时不初始化 SDK，不注入远端页面。 */
 export const ZCODE_ARMS_RUM_ENDPOINT: string =
   typeof __ZCODE_ARMS_RUM_ENDPOINT__ !== "undefined" ? __ZCODE_ARMS_RUM_ENDPOINT__ : "";
 /** 事件上报（数仓）地址；为空时不上报。 */

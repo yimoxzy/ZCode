@@ -19,6 +19,7 @@ const appMock = {
 // 编译期常量 ZCODE_PRODUCT_FLAVOR 决定 isPreviewPackagedRuntime；Dynamic Workflow 灰度的
 // 「打包 production」档位必须能与 preview 区分，因此这里改成可切换的持有者，默认仍是 preview。
 const productFlavorMock = { value: "preview" as string };
+const desktopBrandMock = { enabled: false };
 
 vi.mock("electron", () => ({
   app: appMock,
@@ -43,6 +44,9 @@ vi.mock("@zcode/shared", () => ({
     ],
   },
   ZCODE_ENV: "test",
+  get ZHILIU_DESKTOP_ENABLED() {
+    return desktopBrandMock.enabled;
+  },
   get ZCODE_PRODUCT_FLAVOR() {
     return productFlavorMock.value;
   },
@@ -908,6 +912,7 @@ describe("desktopRuntimeEnv runtime identity", () => {
   beforeEach(() => {
     vi.resetModules();
     appMock.isPackaged = false;
+    desktopBrandMock.enabled = false;
     appMock.getPath.mockClear();
     appMock.getPath.mockImplementation((name: string) => `/mock/${name}`);
     delete process.env["ZCODE_DESKTOP_APPLICATION_NAME"];
@@ -983,6 +988,15 @@ describe("desktopRuntimeEnv runtime identity", () => {
     // 所以用同样的 join 表达；在 POSIX 上是恒等变换。
     expect(runtimeUserDataPath).toBe(join("/mock/appData", "ZCode Preview"));
     expect(runtimeSessionDataPath).toBe(join("/mock/appData", "ZCode Preview", "session"));
+  });
+
+  it.each([false, true])("织流构建使用独立品牌目录，packaged=%s", async (packaged) => {
+    desktopBrandMock.enabled = true;
+    appMock.isPackaged = packaged;
+    const { runtimeApplicationName, runtimeUserDataPath } =
+      await import("../src/main/desktopRuntimeEnv.js");
+    expect(runtimeApplicationName).toBe("织流");
+    expect(runtimeUserDataPath).toBe(join("/mock/appData", "织流"));
   });
 
   it("e2e 可保留 Chromedriver 注入的 Electron userData 目录", async () => {

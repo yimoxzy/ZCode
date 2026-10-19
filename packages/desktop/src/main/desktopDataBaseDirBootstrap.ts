@@ -1,10 +1,15 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { setDataBaseDir } from "@zcode/services/node";
+import { getDataBaseDir, resolveDefaultDataBaseDir, setDataBaseDir } from "@zcode/services/node";
 
-export function resolveBootstrapSettingsFile(homePath: string = homedir()): string {
-  return join(homePath, ".zcode", "v2", "setting.json");
+export function resolveBootstrapSettingsFile(
+  homePath: string = process.env.ZCODE_DESKTOP_HOME_DIR?.trim() ||
+    process.env.HOME?.trim() ||
+    process.env.USERPROFILE?.trim() ||
+    homedir(),
+): string {
+  return join(resolveDefaultDataBaseDir(homePath), ".zcode", "v2", "setting.json");
 }
 
 export function extractBootstrapDataBaseDir(rawValue: unknown): string | null {
@@ -37,6 +42,11 @@ function readBootstrapDataBaseDirFromDisk(
 }
 
 export function applyEarlyDataBaseDirBootstrap(): string | null {
+  const currentBaseDir = getDataBaseDir();
+  if (process.env.ZCODE_DATA_BASE_DIR?.trim() || currentBaseDir !== resolveDefaultDataBaseDir()) {
+    // 显式运维目录和已注入的根优先，旧启动设置不能悄悄把实例重新指向其他数据。
+    return currentBaseDir;
+  }
   const dataBaseDir = readBootstrapDataBaseDirFromDisk();
   if (dataBaseDir) {
     // 启动早期就把 dataBaseDir 注入进来，避免 logger / crashReporter 先按默认 HOME 建目录，

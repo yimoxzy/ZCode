@@ -1,6 +1,7 @@
 import armsRum from "@arms/rum-electron/browser";
 import type { ZCodeRuntimeEnv } from "@zcode/shared";
 import { buildArmsBrowserInitConfig } from "./armsRumShared.js";
+import { ARMS_TELEMETRY_ENABLED } from "./armsTelemetryPolicy.js";
 
 let bootstrapped = false;
 
@@ -10,6 +11,7 @@ let bootstrapped = false;
  * 仅放在 renderer 入口会导致 beforeReport 长期 perf=0；须在 preload 末尾（ARMS frame preload 已注入 Bridge 之后）调用。
  */
 export function initArmsBrowserRumOnce(runtimeEnv: ZCodeRuntimeEnv): boolean {
+  if (!ARMS_TELEMETRY_ENABLED) return false;
   if (bootstrapped) {
     return true;
   }
@@ -45,6 +47,7 @@ export function initArmsBrowserRumOnce(runtimeEnv: ZCodeRuntimeEnv): boolean {
 
 /** preload 中 ARMS frame preload 可能晚于本脚本一帧，短重试避免 Bridge 尚未就绪 */
 export function scheduleArmsBrowserRumInit(runtimeEnv: ZCodeRuntimeEnv, maxAttempts = 50): void {
+  if (!ARMS_TELEMETRY_ENABLED) return;
   let attempts = 0;
   const tick = (): void => {
     if (initArmsBrowserRumOnce(runtimeEnv)) {

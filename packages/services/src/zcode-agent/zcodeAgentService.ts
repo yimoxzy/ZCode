@@ -2,7 +2,9 @@ import {
   requiresRequestVerification,
   allowRequestVerificationHeaders,
   requestVerificationInteractionAvailable,
+  ZHILIU_DESKTOP_ENABLED,
 } from "@zcode/shared";
+import { DesktopInferenceUnavailableError } from "../zhiliu/managedModelPolicy.js";
 import { zcodeMcpUiSamplingResultSchema } from "@zcode/shared";
 import { MCP_APPS_SAMPLING_TRANSPORT_TIMEOUT_MS } from "@zcode/shared/mcp-apps";
 import {
@@ -3294,6 +3296,7 @@ export function createZCodeAgentService(
   }
 
   async function getClient(params: ZCodeAgentWorkspaceTarget) {
+    if (ZHILIU_DESKTOP_ENABLED) throw new DesktopInferenceUnavailableError();
     const workspaceKey = resolveWorkspaceKey(params);
     const active = activeClientsByWorkspaceKey.get(workspaceKey);
     if (active?.modelExecutionEnabled && isReusableActiveClientEntry(params, active)) {

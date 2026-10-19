@@ -9,6 +9,7 @@ import {
   localeSchema,
   nonEmptyStringSchema,
   PlatformChannels,
+  ZHILIU_DESKTOP_ENABLED,
   rendererLogPayloadSchema,
   stringArraySchema,
   webRemoteControlTaskTargetsSchema,
@@ -397,6 +398,8 @@ export function registerPlatformIpcHandlers(options: {
   });
 
   ipcMain.handle(PlatformChannels.CanOpenCommunity, async (_event, locale: unknown) => {
+    // Quick Pick 在工作区挂载时就查询社区；不能等用户点击命令后才拦截上游配置请求。
+    if (ZHILIU_DESKTOP_ENABLED) return false;
     const result = localeSchema.safeParse(locale);
     if (!result.success) {
       options.logger.warn("[community] invalid locale:", formatZodError(result.error));

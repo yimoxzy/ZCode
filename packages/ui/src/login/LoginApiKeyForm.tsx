@@ -11,6 +11,7 @@ import {
   TID_LOGIN_API_KEY_PROVIDER_TRIGGER,
   TID_LOGIN_API_KEY_SKIP_BUTTON,
   ZAI_PROVIDER_ID,
+  ZHILIU_DESKTOP_ENABLED,
   testId,
 } from "@zcode/shared";
 import { Alert, AlertDescription } from "@/components/ui/alert.js";
@@ -39,6 +40,7 @@ import {
   type ApiKeyProviderChoice,
 } from "@/login/LoginApiKeyForm.helpers.js";
 import { useZCodeStore } from "@/store/StoreProvider.js";
+import { ZhiliuCloudAccessNotice } from "@/root/ZhiliuCloudAccessNotice.js";
 
 interface LoginApiKeyFormProps {
   onCancel: () => void;
@@ -46,7 +48,15 @@ interface LoginApiKeyFormProps {
   onSkipped: () => void | Promise<void>;
 }
 
-export function LoginApiKeyForm({ onCancel, onSaved, onSkipped }: LoginApiKeyFormProps) {
+export function LoginApiKeyForm(props: LoginApiKeyFormProps) {
+  return ZHILIU_DESKTOP_ENABLED ? (
+    <ZhiliuCloudAccessNotice />
+  ) : (
+    <UpstreamLoginApiKeyForm {...props} />
+  );
+}
+
+function UpstreamLoginApiKeyForm({ onCancel, onSaved, onSkipped }: LoginApiKeyFormProps) {
   const { intl, locale } = useZCodeIntl();
   const platform = usePlatform();
   const { modelSelectionService, providerSettingsService, settingService } = useServices();

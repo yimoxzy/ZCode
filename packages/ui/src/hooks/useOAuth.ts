@@ -11,6 +11,7 @@ import {
   isCredentialDecryptError,
   resolveSafeTelemetryHostname,
   ZAI_PROVIDER_ID,
+  ZHILIU_DESKTOP_ENABLED,
 } from "@zcode/shared";
 import { reportAppTelemetryEvent } from "@/lib/appTelemetry.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
@@ -36,6 +37,10 @@ export function useOAuth() {
   const setOAuthPollingActive = useZCodeStore((state) => state.setOAuthPollingActive);
 
   const refreshProviders = useCallback(async () => {
+    if (ZHILIU_DESKTOP_ENABLED) {
+      setLoadingProviders(false);
+      return;
+    }
     try {
       setLoadingProviders(true);
       const providerList = await oauthService.getProviders();
@@ -70,6 +75,8 @@ export function useOAuth() {
 
   const startLogin = useCallback(
     async (provider: OAuthProviderId, options: { purpose?: LoginEntryPurpose } = {}) => {
+      // 织流账号由 SaaS 管理，不能将用户导向上游官方授权页。
+      if (ZHILIU_DESKTOP_ENABLED) return;
       const loginAttempt = ++loginAttemptRef.current;
       try {
         setStatus("waiting");
@@ -129,7 +136,7 @@ export function useOAuth() {
   const cancel = useCallback(
     async (provider?: OAuthProviderId) => {
       loginAttemptRef.current += 1;
-      await oauthService.cancelPending(provider);
+      if (!ZHILIU_DESKTOP_ENABLED) await oauthService.cancelPending(provider);
       setOAuthPollingActive(false);
       setStatus("idle");
       setError(null);

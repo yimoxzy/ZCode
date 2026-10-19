@@ -9,6 +9,7 @@ import { LucideProvider, RefreshCw } from "lucide-react";
 import {
   APP_RUNTIME_PREFERENCES_CHANGED_BROADCAST_CHANNEL,
   DesktopCommandIds,
+  ZHILIU_DESKTOP_ENABLED,
   appRuntimePreferencesChangedBroadcastPayloadSchema,
   type RemoteTarget,
 } from "@zcode/shared";
@@ -27,6 +28,7 @@ import { useWorkspaceServices } from "@/hooks/useWorkspaceServices.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { SSHDialog } from "@/SSHDialog.js";
 import { SettingsPage } from "@/SettingsPage.js";
+import { ZhiliuCloudAccessNotice } from "@/root/ZhiliuCloudAccessNotice.js";
 import { CodingPlanUpgradeDialogProvider } from "@/settings/CodingPlanUpgradeDialogProvider.js";
 import { RewardsProvider } from "@/rewards/RewardsProvider.js";
 import { WelcomeScreen, type LoginCompleteReason } from "@/WelcomeScreen.js";
@@ -49,6 +51,7 @@ import { TabStoreProvider, useTabStore, useTabStoreApi } from "@/store/TabStoreP
 import { isSettingsTab, isWorkspaceTab, type WorkspaceTabState } from "@/store/tabStore.js";
 import { logger } from "@/logger.js";
 import { RootShell } from "@/root/RootShell.js";
+import { ZhiliuWorkspaceSwitcher } from "@/root/ZhiliuWorkspaceSwitcher.js";
 import { RootWorkspaceContent } from "@/root/RootWorkspaceContent.js";
 import { resolveRootWorkspaceShellTarget } from "@/root/rootWorkspaceShellTarget.js";
 import { OccupationOnboarding } from "@/onboarding/OccupationOnboarding.js";
@@ -248,18 +251,26 @@ export function Root(props: RootProps) {
           <PlatformProvider platform={props.platform}>
             <StoreProvider
               broadcastService={props.services.broadcastService}
-              initialIsRestoringOAuthSession
+              initialIsRestoringOAuthSession={!ZHILIU_DESKTOP_ENABLED}
             >
               <TabStoreProvider>
                 <DiffsWorkerPoolProvider>
-                  <WebRemoteControlFeatureProvider enabled={props.webRemoteControlFeatureEnabled}>
+                  <WebRemoteControlFeatureProvider
+                    enabled={!ZHILIU_DESKTOP_ENABLED && props.webRemoteControlFeatureEnabled}
+                  >
                     <AssistantCodeCommentFeatureProvider
                       enabled={props.assistantCodeCommentCardsEnabled}
                     >
-                      <CodingPlanUpgradeDialogProvider>
-                        <RewardsProvider desktop={props.isDesktop === true}>
-                          <RequestSecurityHost />
-                          <MarketingTouchProvider desktop={props.isDesktop === true}>
+                      <CodingPlanUpgradeDialogProvider enabled={!ZHILIU_DESKTOP_ENABLED}>
+                        <RewardsProvider
+                          desktop={props.isDesktop === true}
+                          enabled={!ZHILIU_DESKTOP_ENABLED}
+                        >
+                          {!ZHILIU_DESKTOP_ENABLED && <RequestSecurityHost />}
+                          <MarketingTouchProvider
+                            desktop={props.isDesktop === true}
+                            enabled={!ZHILIU_DESKTOP_ENABLED}
+                          >
                             <RootInner {...props} />
                           </MarketingTouchProvider>
                         </RewardsProvider>
@@ -335,7 +346,10 @@ function RootInner({
   // 动态工作流灰度快照的唯一取数点：
   // 放在 app 级 ServiceProvider 这一层取一次，自动化页与 run 面板只读。消费方可能位于
   // 工作区级 ServiceProvider 内（远程 Host 的 accessor），由它们取数会拿到另一台 Host 的答案。
-  useDynamicWorkflowAvailabilityLoader(services.codingPlanSubscriptionService);
+  useDynamicWorkflowAvailabilityLoader(
+    services.codingPlanSubscriptionService,
+    !ZHILIU_DESKTOP_ENABLED,
+  );
 
   const { intl, locale } = useZCodeIntl();
   const theme = useZCodeStore((state) => state.theme);
@@ -355,14 +369,14 @@ function RootInner({
   // docs/dynamic-workflow/launch.md「The user's choice」：设置里的动态工作流选择变化后，通知本窗口
   // 的 Host 重发 CLI 策略（并转发给远程 Host），再重读灰度快照。
   useDynamicWorkflowUserModeSync({
-    settingsLoaded: Boolean(appSettings),
+    settingsLoaded: !ZHILIU_DESKTOP_ENABLED && Boolean(appSettings),
     userMode: appSettings?.dynamicWorkflowMode,
     zcodeAgentService: services.zcodeAgentService,
     codingPlanSubscriptionService: services.codingPlanSubscriptionService,
   });
   const [welcomeScreenOpenReason, setWelcomeScreenOpenReason] =
     useState<WelcomeScreenOpenReason | null>(() =>
-      consumeZcodeJwtInvalidRestartMarker() ? "session-expired" : null,
+      !ZHILIU_DESKTOP_ENABLED && consumeZcodeJwtInvalidRestartMarker() ? "session-expired" : null,
     );
   const [providerFamilyDomainMigrationComplete, setProviderFamilyDomainMigrationComplete] =
     useState(false);
@@ -562,6 +576,10 @@ function RootInner({
   const refreshProviderState = useRootProviderStateRefresh(services);
   useRootProviderSettingsSnapshot(services);
   useEffect(() => {
+    if (ZHILIU_DESKTOP_ENABLED) {
+      setProviderFamilyDomainMigrationComplete(true);
+      return;
+    }
     let disposed = false;
 
     void (async () => {
@@ -593,7 +611,7 @@ function RootInner({
 
   const shouldPreferDirectoryBrowser = Boolean(preferDirectoryBrowser);
   const supportsEmbeddedBrowser = explicitSupportsEmbeddedBrowser ?? Boolean(isDesktop);
-  const isResolvingStartupAuthState = isRestoringOAuthSession;
+  const isResolvingStartupAuthState = !ZHILIU_DESKTOP_ENABLED && isRestoringOAuthSession;
   const rootProviderAvailability = resolveProviderAvailabilityState({
     modelSelectionView: rootModelSelectionView,
   });
@@ -604,6 +622,7 @@ function RootInner({
   });
   const isWebRemoteControlRoot = Boolean(webRemoteControlWorkspaceSwitcher);
   const providerAvailabilityLoginEntryGuardEnabled =
+    !ZHILIU_DESKTOP_ENABLED &&
     shouldEnableProviderAvailabilityLoginEntryGuard({
       isWebRemoteControlRoot,
     });
@@ -632,11 +651,13 @@ function RootInner({
         });
       },
     });
-  const isResolvingProviderStartupState = shouldResolveProviderStartupState({
-    isWebRemoteControlRoot,
-    providerStartupSyncPending,
-    providerAvailabilityStartupCheckCompleted,
-  });
+  const isResolvingProviderStartupState =
+    !ZHILIU_DESKTOP_ENABLED &&
+    shouldResolveProviderStartupState({
+      isWebRemoteControlRoot,
+      providerStartupSyncPending,
+      providerAvailabilityStartupCheckCompleted,
+    });
   const isStartupProviderLoginEntryOpen = welcomeScreenOpenReason === "startup-provider-required";
   // 首次安装时 provider 登录入口判定晚于 workspace 注入，ChatView 会先 mount 并触发草稿预热。
   // 这里把 provider 启动检查纳入 workspace 恢复门禁，避免未连接账号前启动 ZCode session。
@@ -924,6 +945,7 @@ function RootInner({
   }, [platform]);
 
   useRootOAuthEffects({
+    enabled: !ZHILIU_DESKTOP_ENABLED,
     accountIntentKey: JSON.stringify([
       user?.id,
       appSettings?.providerFamilyDomain,
@@ -1088,7 +1110,7 @@ function RootInner({
   }, [isSettingsTabActive, workspaceShellPath]);
 
   useEffect(() => {
-    if (!loginEntryRequest) {
+    if (ZHILIU_DESKTOP_ENABLED || !loginEntryRequest) {
       return;
     }
     // 登录入口已从模态弹窗收敛为 WelcomeScreen。
@@ -1189,15 +1211,20 @@ function RootInner({
     onCreateTask: handleCreateTask,
     onOpenWorkspace: handleOpenWorkspace,
     allowOpenWorkspace,
-    onLogin: !user ? handleOpenLoginEntry : undefined,
-    onLogout: user ? handleLogout : undefined,
-    user,
+    onLogin: !ZHILIU_DESKTOP_ENABLED && !user ? handleOpenLoginEntry : undefined,
+    onLogout: !ZHILIU_DESKTOP_ENABLED && user ? handleLogout : undefined,
+    user: ZHILIU_DESKTOP_ENABLED ? null : user,
   };
+
+  const workspaceNavigation =
+    ZHILIU_DESKTOP_ENABLED && isDesktop ? (
+      <ZhiliuWorkspaceSwitcher onOpenLocal={handleOpenWorkspace} />
+    ) : undefined;
 
   if (isStartupRenderBlocked) {
     const loadingLabel = intl.formatMessage({ id: "common.loading" });
     return (
-      <RootShell>
+      <RootShell navigation={workspaceNavigation}>
         {rootModelSelectionErrorNode}
         {webRemoteControlTaskSyncNode}
         {requestSecurityBridgeNode}
@@ -1211,9 +1238,9 @@ function RootInner({
     );
   }
 
-  if (welcomeScreenOpenReason) {
+  if (!ZHILIU_DESKTOP_ENABLED && welcomeScreenOpenReason) {
     return (
-      <RootShell>
+      <RootShell navigation={workspaceNavigation}>
         {rootModelSelectionErrorNode}
         {webRemoteControlTaskSyncNode}
         {requestSecurityBridgeNode}
@@ -1233,7 +1260,7 @@ function RootInner({
     // 非桌面入口的 workspace tab 由 effect 注入，首帧不能返回 null。
     // 这里延续入口 loading，等任务列表有 workspaceShellPath 后再切换，避免露出浏览器白底。
     return (
-      <RootShell>
+      <RootShell navigation={workspaceNavigation}>
         {rootModelSelectionErrorNode}
         {webRemoteControlTaskSyncNode}
         {requestSecurityBridgeNode}
@@ -1244,7 +1271,7 @@ function RootInner({
   }
 
   return (
-    <RootShell>
+    <RootShell navigation={workspaceNavigation}>
       {rootModelSelectionErrorNode}
       {webRemoteControlTaskSyncNode}
       {requestSecurityBridgeNode}
@@ -1267,6 +1294,8 @@ function RootInner({
             >
               <SettingsPage {...settingsLayerProps} />
             </ScopedErrorBoundary>
+          ) : ZHILIU_DESKTOP_ENABLED ? (
+            <ZhiliuCloudAccessNotice />
           ) : null
         ) : (
           <RootWorkspaceContent
@@ -1294,9 +1323,9 @@ function RootInner({
             remoteWorkspaceSessions={remoteWorkspaceSessions}
             allowRemoteWorkspace={allowRemoteWorkspace}
             handleBackFromSettings={handleBackFromSettings}
-            handleLogout={user ? handleLogout : undefined}
-            onLogin={!user ? handleOpenLoginEntry : undefined}
-            user={user}
+            handleLogout={!ZHILIU_DESKTOP_ENABLED && user ? handleLogout : undefined}
+            onLogin={!ZHILIU_DESKTOP_ENABLED && !user ? handleOpenLoginEntry : undefined}
+            user={ZHILIU_DESKTOP_ENABLED ? null : user}
             reconnectingRemoteWorkspaceKeys={reconnectingRemoteWorkspaceKeys}
             remoteWorkspaceErrorByWorkspaceKey={remoteWorkspaceErrorByWorkspaceKey}
             reconnectingRemoteWorkspaceLogsByWorkspaceKey={

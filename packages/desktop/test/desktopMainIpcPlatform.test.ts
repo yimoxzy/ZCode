@@ -6,6 +6,7 @@ type IpcHandler = (...args: unknown[]) => unknown;
 const electronMocks = vi.hoisted(() => {
   const handlers = new Map<string, IpcHandler>();
   return {
+    zhiliu: false,
     handlers,
     openCuaPermissionOnboarding: vi.fn(),
     // 拖拽授权引导的 helper 预校验：本文件只覆盖 platform IPC 注册，不验证 helper
@@ -26,6 +27,13 @@ const electronMocks = vi.hoisted(() => {
     browserWindowFromWebContents: vi.fn(() => null),
   };
 });
+
+vi.mock("@zcode/shared", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@zcode/shared")>()),
+  get ZHILIU_DESKTOP_ENABLED() {
+    return electronMocks.zhiliu;
+  },
+}));
 
 vi.mock("electron", () => ({
   BrowserWindow: {
@@ -97,6 +105,7 @@ vi.mock("../src/main/cuaAccessibilitySettings.js", () => ({
 
 describe("registerPlatformIpcHandlers", () => {
   beforeEach(() => {
+    electronMocks.zhiliu = false;
     electronMocks.handlers.clear();
     electronMocks.openCuaPermissionOnboarding.mockReset();
     electronMocks.showOpenDialog.mockReset();
@@ -105,6 +114,35 @@ describe("registerPlatformIpcHandlers", () => {
     electronMocks.ipcOn.mockClear();
     electronMocks.browserWindowFromWebContents.mockReset();
     electronMocks.browserWindowFromWebContents.mockReturnValue(null);
+  });
+
+  it("织流工作区社区可用性查询不读取上游帮助配置", async () => {
+    electronMocks.zhiliu = true;
+    const { registerPlatformIpcHandlers } = await import("../src/main/desktopMainIpcPlatform.js");
+    const { resolveCommunityUrl } = await import("../src/main/desktopCommandHandlers.js");
+    vi.mocked(resolveCommunityUrl).mockClear();
+    const fetchHelpConfig = vi.fn();
+    registerPlatformIpcHandlers({
+      fetchHelpConfig,
+      logger: { info: vi.fn(), warn: vi.fn() },
+      applyApplicationLocale: vi.fn(async () => {}),
+      focusWorkspaceInExistingWindow: vi.fn(() => ({ activated: false })),
+      windowWorkspaceMap: new Map(),
+      windowUnreadCountMap: new Map(),
+      currentApplicationLocale: () => "en-US",
+      executeDesktopCommand: vi.fn(async () => {}),
+      acknowledgePostUpdateReleaseNotes: vi.fn(async () => {}),
+      syncTaskRealtimeWorkspaceKeys: vi.fn(),
+      getUpdateState: vi.fn(() => ({ status: "idle" })),
+      syncWebRemoteControlWorkspaces: vi.fn(),
+      syncWebRemoteControlTasks: vi.fn(),
+      deviceMid: "test-device-mid",
+    });
+    await expect(
+      electronMocks.handlers.get(PlatformChannels.CanOpenCommunity)?.({}, "zh-CN"),
+    ).resolves.toBe(false);
+    expect(fetchHelpConfig).not.toHaveBeenCalled();
+    expect(resolveCommunityUrl).not.toHaveBeenCalled();
   });
 
   it("allows creating folders from the workspace directory picker", async () => {

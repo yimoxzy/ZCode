@@ -7,12 +7,21 @@ import { homedir } from "node:os";
 import {
   DATA_BASE_DIR_FORBIDDEN_WINDOWS_INSTALL_DIR_ERROR_CODE,
   ZCODE_AGENT_RUNTIME,
+  ZHILIU_DESKTOP_ENABLED,
 } from "@zcode/shared";
 
 let _dataBaseDir: string | null = null;
 export const ZCODE_WINDOWS_APP_INSTALL_DIR_ENV = "ZCODE_WINDOWS_APP_INSTALL_DIR";
 const envDataBaseDir = process.env.ZCODE_DATA_BASE_DIR?.trim() || null;
-const defaultDataBaseDir = process.env.HOME?.trim() || homedir();
+const defaultDataBaseDir = resolveDefaultDataBaseDir();
+
+/** Brand-owned bootstrap root; explicit runtime data roots never relocate settings. */
+export function resolveDefaultDataBaseDir(
+  homePath: string = process.env.HOME?.trim() || homedir(),
+): string {
+  // 织流不能从同机 ZCode 的默认目录读取模型凭据和历史；内部布局仍保留上游约定。
+  return ZHILIU_DESKTOP_ENABLED ? join(homePath, ".zhiliu-desktop") : homePath;
+}
 
 export interface DataBaseDirTargetValidationOptions {
   platform?: NodeJS.Platform | string;
@@ -33,7 +42,7 @@ export function setDataBaseDir(dir: string | null): void {
   _dataBaseDir = dir?.trim() || null;
 }
 
-/** Get the current base directory. Priority: setDataBaseDir() > env ZCODE_DATA_BASE_DIR > homedir(). */
+/** Priority: setDataBaseDir() > env ZCODE_DATA_BASE_DIR > the brand default root. */
 export function getDataBaseDir(): string {
   if (_dataBaseDir) return _dataBaseDir;
   if (envDataBaseDir) return envDataBaseDir;

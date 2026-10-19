@@ -5,7 +5,7 @@ import "./desktopEarlyDataBaseDirBootstrap.js";
 import "./desktopEarlyChromiumHardwareAccelerationBootstrap.js";
 import { powerMonitor, powerSaveBlocker } from "electron";
 import { crashCapturePaths } from "./appCrashCaptureBootstrap.js";
-import { armsInitPromise } from "./appARMSBootstrap.js";
+import { armsInitPromise, isArmsTelemetryReady } from "./appARMSBootstrap.js";
 import {
   onLocalDatabaseStartupReady,
   configureDatabaseStartupQuit,
@@ -70,6 +70,9 @@ import {
   PlatformChannels,
   ZCODE_ENV,
   ZCODE_PRODUCT_FLAVOR,
+  ZHILIU_DESKTOP_ENABLED,
+  ZHILIU_CLOUD_URL,
+  DesktopCommandIds,
   ZCODE_AUTO_UPDATE_ENABLED,
   DEFAULT_ZCODE_ENDPOINT_ORIGIN,
   DEFAULT_LOCALE,
@@ -129,6 +132,8 @@ import { createWebRemoteControlFeatureGate } from "./webRemoteControlFeatureGate
 import { reconnectWebRemoteControlWorkspaceInRenderer } from "./webRemoteControlRendererReconnect.js";
 import { sendWebRemoteControlStatusChangedToWindow } from "./webRemoteControlStatusEvents.js";
 import { executeDesktopCommand } from "./desktopCommandHandlers.js";
+import { openZhiliuCloudWindow, isZhiliuCloudWindow } from "./zhiliuCloudWindow.js";
+import { resolveBootstrapSettingsFile } from "./desktopDataBaseDirBootstrap.js";
 import { clampDesktopZoomLevel, resolveDesktopZoomLevelFromFactor } from "./desktopZoom.js";
 import {
   getDesktopMenuLabel as getDesktopMenuLabelByLocale,
@@ -563,7 +568,7 @@ async function runBrowserCommandOnView(params: {
 let currentDesktopZoomLevel = 0;
 let currentDesktopWindowSize: DesktopWindowSize | undefined;
 const preloadPath = join(import.meta.dirname, "../preload/index.cjs");
-const settingsFile = join(homedir(), ".zcode", "v2", "setting.json");
+const settingsFile = resolveBootstrapSettingsFile();
 let activeAppShutdownPolicy = resolveAppShutdownPolicy("normal", process.platform);
 let activeAppShutdownKind: AppShutdownKind | null = null;
 const WINDOWS_AGENT_FORCE_KILL_TIMEOUT_MS = 2_000;
@@ -842,11 +847,13 @@ const readHelpConfig = createDesktopHelpConfigReader({
 });
 // 同一个 /api/v1/client/configs fetcher 供两个灰度 rollout 共用（请求参数与鉴权完全一致，
 // 各自独立缓存/去重，服务端按 data.configs.<key> 区分功能）。
-const electronClientConfigsFetcher = createElectronDesktopContextPromptConfigFetcher({
-  appVersion: ZCODE_VERSION || app.getVersion(),
-  deviceMid,
-  resolveEndpointOrigin: resolveCurrentZCodeEndpointOrigin,
-});
+const electronClientConfigsFetcher = ZHILIU_DESKTOP_ENABLED
+  ? async () => ({ code: 0, data: { configs: {} } })
+  : createElectronDesktopContextPromptConfigFetcher({
+      appVersion: ZCODE_VERSION || app.getVersion(),
+      deviceMid,
+      resolveEndpointOrigin: resolveCurrentZCodeEndpointOrigin,
+    });
 desktopContextPromptRollout = createDesktopContextPromptRollout({
   fetchConfig: electronClientConfigsFetcher,
   logger,
@@ -873,7 +880,10 @@ const rendererActionTraceBroker = createRendererActionTraceBroker({
 let disposeRendererActionTraceIpc: (() => void) | undefined;
 const armsUserIdentitySync = createArmsUserIdentitySync({
   deviceMid,
-  setUser: (user) => armsRum.setConfig("user", user),
+  setUser: (user) => {
+    // 关闭遥测或 SDK 降级时没有 config，不能继续写入而阻断主窗口启动。
+    if (isArmsTelemetryReady()) armsRum.setConfig("user", user);
+  },
 });
 const webRemoteControlAppVersion = ZCODE_VERSION || app.getVersion();
 const defaultZCodeEndpointUrls = buildZCodeEndpointUrls(DEFAULT_ZCODE_ENDPOINT_ORIGIN, {
@@ -951,7 +961,7 @@ const webRemoteControlManager = createWebRemoteControlManager({
       });
     },
   },
-  featureGate: createWebRemoteControlFeatureGate(),
+  featureGate: createWebRemoteControlFeatureGate(!ZHILIU_DESKTOP_ENABLED),
   logger,
   relayMessageLogger: webRemoteControlRelayLogger,
   platformHandlers: {
@@ -1022,7 +1032,7 @@ function focusForceUpdateGateWindow() {
 }
 
 const primaryWindowCoordinator = createPrimaryWindowCoordinator({
-  listWindows: getApplicationWindowsExcludingCuaIndicator,
+  listWindows: getMainApplicationWindows,
   resolveStartupWindowBootstrap: () => {
     if (startupOpenWorkspaceRequest) {
       const request = startupOpenWorkspaceRequest;
@@ -1489,6 +1499,47 @@ async function executeDesktopCommandForApp(
   command: Parameters<typeof executeDesktopCommand>[0]["command"],
   senderWindow?: BrowserWindow | null,
 ) {
+  if (command === DesktopCommandIds.OpenZhiliuCloud) {
+    if (!ZHILIU_DESKTOP_ENABLED) throw new Error("Zhiliu is not enabled in this build");
+    try {
+      await openZhiliuCloudWindow({
+        cloudUrl: process.env.ZHILIU_CLOUD_URL?.trim() || ZHILIU_CLOUD_URL,
+        logger,
+      });
+      return { opened: true };
+    } catch {
+      // loadURL 原始异常可能含登录参数，入口仅展示固定错误。
+      await dialog.showMessageBox({
+        type: "error",
+        title: "织流云 Agent",
+        message: "暂时无法打开云 Agent",
+        detail: "请检查织流服务地址和网络后重试。开发环境请先连接本机安全隧道。",
+      });
+      return { opened: false };
+    }
+  }
+  if (ZHILIU_DESKTOP_ENABLED) {
+    if (command === DesktopCommandIds.ShowAbout) {
+      await dialog.showMessageBox({
+        title: "关于织流",
+        message: `织流桌面技术版 ${ZCODE_VERSION}`,
+        detail:
+          "基于 ZCode 开源项目构建。云 Agent 使用织流平台账号和积分；本地项目使用自有模型 Key。保留上游 Apache-2.0 许可与第三方声明。",
+      });
+      return;
+    }
+    const upstreamOnlyCommands: ReadonlySet<string> = new Set([
+      DesktopCommandIds.OpenChangelog,
+      DesktopCommandIds.CheckForUpdates,
+      DesktopCommandIds.OpenFeedback,
+      DesktopCommandIds.OpenCommunity,
+      DesktopCommandIds.SetZCodeEndpointProduction,
+      DesktopCommandIds.SetZCodeEndpointTest,
+      DesktopCommandIds.SetZCodeEndpointCustom,
+      DesktopCommandIds.ResetZCodeEndpoint,
+    ]);
+    if (upstreamOnlyCommands.has(command)) return;
+  }
   return executeDesktopCommand({
     fetchHelpConfig: readHelpConfig,
     command,
@@ -1601,7 +1652,9 @@ function getApplicationWindowsExcludingCuaIndicator(): BrowserWindow[] {
 }
 
 function getMainApplicationWindows(): BrowserWindow[] {
-  return getApplicationWindowsExcludingCuaIndicator().filter((win) => win !== updateStatusWindow);
+  return getApplicationWindowsExcludingCuaIndicator().filter(
+    (win) => win !== updateStatusWindow && !isZhiliuCloudWindow(win),
+  );
 }
 
 function isUpdateStatusWindowCloseLocked(state: UpdateStatePayload) {
@@ -2017,7 +2070,10 @@ function createWindowInstance(startupBootstrap: StartupWindowBootstrap = {}) {
   return win;
 }
 
-registerDeepLinkProtocol(logger, { iconPath: linuxDesktopIntegrationIconPath });
+// 织流尚未启用自有深链，不能抢占同机 ZCode 的协议处理器。
+if (!ZHILIU_DESKTOP_ENABLED) {
+  registerDeepLinkProtocol(logger, { iconPath: linuxDesktopIntegrationIconPath });
+}
 app.on("open-url", (event, url) => {
   event.preventDefault();
   const workspacePath = extractOpenWorkspacePathFromDeepLinkUrl(url);
@@ -2026,7 +2082,7 @@ app.on("open-url", (event, url) => {
     focusForceUpdateGateWindow();
     return;
   }
-  if (workspacePath && getApplicationWindowsExcludingCuaIndicator().length === 0) {
+  if (workspacePath && getMainApplicationWindows().length === 0) {
     // macOS 冷启动 Finder Service 会先触发 open-url，再创建首窗。
     // 把目标目录按 deep link 来源记录，首窗 bootstrap 前仍要走确认 gate。
     startupOpenWorkspaceRequest = { path: workspacePath, source: "deep-link" };
@@ -2037,7 +2093,7 @@ app.on("open-url", (event, url) => {
   }
   handleDeepLink(url, logger, {
     confirmationCopy: resolveExternalWorkspaceConfirmationCopy(),
-    resolveApplicationWindow: () => getApplicationWindowsExcludingCuaIndicator()[0] ?? null,
+    resolveApplicationWindow: () => getMainApplicationWindows()[0] ?? null,
   });
 });
 const gotTheLock = app.requestSingleInstanceLock(createDeepLinkSingleInstanceData(process.argv));
@@ -2057,10 +2113,9 @@ app.on("second-instance", (_event, argv, _workingDirectory, additionalData) => {
           allowWithoutReadyWindow: true,
           ...options,
           resolveApplicationWindow:
-            options?.resolveApplicationWindow ??
-            (() => getApplicationWindowsExcludingCuaIndicator()[0] ?? null),
+            options?.resolveApplicationWindow ?? (() => getMainApplicationWindows()[0] ?? null),
         }),
-      resolveApplicationWindow: () => getApplicationWindowsExcludingCuaIndicator()[0] ?? null,
+      resolveApplicationWindow: () => getMainApplicationWindows()[0] ?? null,
       logger,
       workspaceConfirmationCopy: resolveExternalWorkspaceConfirmationCopy(),
     })
@@ -2068,7 +2123,7 @@ app.on("second-instance", (_event, argv, _workingDirectory, additionalData) => {
     return;
   }
 
-  const win = getApplicationWindowsExcludingCuaIndicator()[0];
+  const win = getMainApplicationWindows()[0];
   if (win) {
     if (win.isMinimized()) {
       win.restore();
@@ -2077,6 +2132,8 @@ app.on("second-instance", (_event, argv, _workingDirectory, additionalData) => {
       win.show();
     }
     win.focus();
+  } else {
+    void primaryWindowCoordinator.ensurePrimaryWindow("second-instance");
   }
 });
 
@@ -2182,7 +2239,11 @@ app.whenReady().then(async () => {
     // 打包态必须与 NSIS 快捷方式使用同一 AUMID，否则 Shell 把它们当成不同应用。
     // 使用构建期产品身份，不依赖用户机器环境；开发态继续保持独立身份。
     app.setAppUserModelId(
-      resolveWindowsAppUserModelIdForFlavor(ZCODE_PRODUCT_FLAVOR, { isPackaged: app.isPackaged }),
+      ZHILIU_DESKTOP_ENABLED
+        ? "ai.zhiliu.desktop"
+        : resolveWindowsAppUserModelIdForFlavor(ZCODE_PRODUCT_FLAVOR, {
+            isPackaged: app.isPackaged,
+          }),
     );
   }
 
@@ -2190,20 +2251,22 @@ app.whenReady().then(async () => {
   if (!loadedBootstrapLocale) {
     currentApplicationLocale = resolveSystemApplicationLocale();
   }
-  installFinderOpenFolderWorkflow({
-    platform: process.platform,
-    locale: currentApplicationLocale,
-    homeDir: app.getPath("home"),
-    logger,
-  });
-  await installWindowsOpenFolderContextMenu({
-    platform: process.platform,
-    executablePath: process.execPath,
-    argv: process.argv,
-    isDefaultApp: Boolean(process.defaultApp),
-    locale: currentApplicationLocale,
-    logger,
-  });
+  if (!ZHILIU_DESKTOP_ENABLED) {
+    installFinderOpenFolderWorkflow({
+      platform: process.platform,
+      locale: currentApplicationLocale,
+      homeDir: app.getPath("home"),
+      logger,
+    });
+    await installWindowsOpenFolderContextMenu({
+      platform: process.platform,
+      executablePath: process.execPath,
+      argv: process.argv,
+      isDefaultApp: Boolean(process.defaultApp),
+      locale: currentApplicationLocale,
+      logger,
+    });
+  }
   try {
     await applyDesktopChromiumNetworkPolicies(session, bootstrapSettings ?? {}, logger);
   } catch (error) {
@@ -2237,7 +2300,8 @@ app.whenReady().then(async () => {
   // 不向 Preview 渠道提供更新。构建期未启用自动更新时同样不更新
   // （见 docs/desktop/build-time-optional-capabilities.md）。
   void initAutoUpdater({
-    enabled: ZCODE_PRODUCT_FLAVOR === "production" && ZCODE_AUTO_UPDATE_ENABLED,
+    enabled:
+      !ZHILIU_DESKTOP_ENABLED && ZCODE_PRODUCT_FLAVOR === "production" && ZCODE_AUTO_UPDATE_ENABLED,
     onBeforeQuitAndInstall: async () => {
       notifyStabilityLifecycle("update_install");
       await prepareAppQuit("auto-update quitAndInstall", "update-install");
@@ -2352,22 +2416,24 @@ app.whenReady().then(async () => {
           win.webContents.send(PlatformChannels.ApplicationLocaleChanged, currentApplicationLocale);
         }
       }
-      installFinderOpenFolderWorkflow({
-        platform: process.platform,
-        locale: currentApplicationLocale,
-        homeDir: app.getPath("home"),
-        logger,
-      });
-      // Windows Explorer 右键菜单是注册表持久项，renderer 切换语言不会自动刷新。
-      // 这里跟 macOS Finder Service 一样在 locale 变化时重写菜单文案，避免继续显示旧语言。
-      await installWindowsOpenFolderContextMenu({
-        platform: process.platform,
-        executablePath: process.execPath,
-        argv: process.argv,
-        isDefaultApp: Boolean(process.defaultApp),
-        locale: currentApplicationLocale,
-        logger,
-      });
+      if (!ZHILIU_DESKTOP_ENABLED) {
+        installFinderOpenFolderWorkflow({
+          platform: process.platform,
+          locale: currentApplicationLocale,
+          homeDir: app.getPath("home"),
+          logger,
+        });
+        // Windows Explorer 右键菜单是注册表持久项，renderer 切换语言不会自动刷新。
+        // 这里跟 macOS Finder Service 一样在 locale 变化时重写菜单文案，避免继续显示旧语言。
+        await installWindowsOpenFolderContextMenu({
+          platform: process.platform,
+          executablePath: process.execPath,
+          argv: process.argv,
+          isDefaultApp: Boolean(process.defaultApp),
+          locale: currentApplicationLocale,
+          logger,
+        });
+      }
       configureDockMenu(
         () =>
           getDesktopMenuLabelByLocale(
@@ -2469,54 +2535,56 @@ app.whenReady().then(async () => {
   // 等待 ARMS 完成 init（含渲染进程注入监听），避免首窗 dom-ready 早于 SDK 注册导致无上报
   await armsInitPromise;
 
-  // ARMS init 完成后首次写入 user.name（落 device_mid）
-  void armsUserIdentitySync.refresh();
+  // 只有 SDK 确认就绪才注册其监控器；disabled 的 SDK 没有 config，注册也会抛错。
+  if (isArmsTelemetryReady()) {
+    void armsUserIdentitySync.refresh();
 
-  configureDesktopStabilityTelemetry({
-    deviceMid,
-    platform: process.platform,
-    appVersion: ZCODE_VERSION,
-    armsEnv: mapZCodeEnvToArmsRumEnv(desktopRuntimeEnv),
-  });
-  configureDesktopResourceTelemetry({
-    deviceMid,
-    platform: process.platform,
-    appVersion: ZCODE_VERSION,
-    armsEnv: mapZCodeEnvToArmsRumEnv(desktopRuntimeEnv),
-  });
-  configureDesktopMcpTelemetry({
-    deviceMid,
-    appVersion: ZCODE_VERSION,
-    armsEnv: mapZCodeEnvToArmsRumEnv(desktopRuntimeEnv),
-  });
-  configureDesktopNetworkTelemetry({
-    deviceMid,
-    platform: process.platform,
-    appVersion: ZCODE_VERSION,
-    armsEnv: mapZCodeEnvToArmsRumEnv(desktopRuntimeEnv),
-  });
-  registerDesktopStabilityMonitors(logger, crashCapturePaths);
-  registerDesktopResourceTelemetry(logger);
-  // 主窗口 renderer 的 60 秒 heap 样本入口；随 App 生命周期常驻，只注册一次。
-  registerRendererHeapSampleIpc();
-  const defaultDataBaseDir = process.env.HOME?.trim() || homedir();
-  registerDesktopZCodeDataSizeTelemetry({
-    context: {
-      appVersion: ZCODE_VERSION,
-      armsEnv: mapZCodeEnvToArmsRumEnv(desktopRuntimeEnv),
-      dataRootKind:
-        resolve(getDataBaseDir()) === resolve(defaultDataBaseDir) ? "default" : "custom",
+    configureDesktopStabilityTelemetry({
       deviceMid,
       platform: process.platform,
-    },
-    getSystemIdleTimeSeconds: () => powerMonitor.getSystemIdleTime(),
-    isAppBackground: () => resolveResourceUsageScene() === "background",
-    isZCodeBusy: () => getRunningAgentSessionCount() > 0,
-    logger,
-    rootPath: getZCodeDataRootDir(),
-    stateFile: join(app.getPath("userData"), "zcode-data-size-telemetry.json"),
-  });
-  registerDesktopNetworkTelemetry(logger);
+      appVersion: ZCODE_VERSION,
+      armsEnv: mapZCodeEnvToArmsRumEnv(desktopRuntimeEnv),
+    });
+    configureDesktopResourceTelemetry({
+      deviceMid,
+      platform: process.platform,
+      appVersion: ZCODE_VERSION,
+      armsEnv: mapZCodeEnvToArmsRumEnv(desktopRuntimeEnv),
+    });
+    configureDesktopMcpTelemetry({
+      deviceMid,
+      appVersion: ZCODE_VERSION,
+      armsEnv: mapZCodeEnvToArmsRumEnv(desktopRuntimeEnv),
+    });
+    configureDesktopNetworkTelemetry({
+      deviceMid,
+      platform: process.platform,
+      appVersion: ZCODE_VERSION,
+      armsEnv: mapZCodeEnvToArmsRumEnv(desktopRuntimeEnv),
+    });
+    registerDesktopStabilityMonitors(logger, crashCapturePaths);
+    registerDesktopResourceTelemetry(logger);
+    // 主窗口 renderer 的 60 秒 heap 样本入口；随 App 生命周期常驻，只注册一次。
+    registerRendererHeapSampleIpc();
+    const defaultDataBaseDir = process.env.HOME?.trim() || homedir();
+    registerDesktopZCodeDataSizeTelemetry({
+      context: {
+        appVersion: ZCODE_VERSION,
+        armsEnv: mapZCodeEnvToArmsRumEnv(desktopRuntimeEnv),
+        dataRootKind:
+          resolve(getDataBaseDir()) === resolve(defaultDataBaseDir) ? "default" : "custom",
+        deviceMid,
+        platform: process.platform,
+      },
+      getSystemIdleTimeSeconds: () => powerMonitor.getSystemIdleTime(),
+      isAppBackground: () => resolveResourceUsageScene() === "background",
+      isZCodeBusy: () => getRunningAgentSessionCount() > 0,
+      logger,
+      rootPath: getZCodeDataRootDir(),
+      stateFile: join(app.getPath("userData"), "zcode-data-size-telemetry.json"),
+    });
+    registerDesktopNetworkTelemetry(logger);
+  }
 
   // 本地未打包 dev 构建（app.isPackaged === false）必须跳过远端强制升级 gate。
   // 原因：force-update gate 只看 ZCODE_ENV === "production"，但 dev 构建（如 dev:desktop:cua
@@ -2526,7 +2594,9 @@ app.whenReady().then(async () => {
   // gate 照常生效，对真实用户零影响。
   const skipForceUpdateForLocalDevRuntime = !app.isPackaged;
   const forceUpdateGuardResult =
-    ZCODE_PRODUCT_FLAVOR === "production" && !skipForceUpdateForLocalDevRuntime
+    !ZHILIU_DESKTOP_ENABLED &&
+    ZCODE_PRODUCT_FLAVOR === "production" &&
+    !skipForceUpdateForLocalDevRuntime
       ? await maybeBlockStartupForForceUpdate({
           locale: currentApplicationLocale,
           logger,
@@ -2548,7 +2618,7 @@ app.whenReady().then(async () => {
   logger.info("[startup] 创建主窗口");
   await primaryWindowCoordinator.ensurePrimaryWindow("app-ready");
 
-  const primaryWindow = getApplicationWindowsExcludingCuaIndicator()[0];
+  const primaryWindow = getMainApplicationWindows()[0];
   if (primaryWindow) {
     scheduleReportPerfAppStartAfterMainViewReady(primaryWindow.webContents, logger);
   }
@@ -2568,7 +2638,7 @@ app.whenReady().then(async () => {
   if (startupDeepLinkConsumptionGate.shouldHandleReadyProtocolUrl(protocolUrl)) {
     handleDeepLink(protocolUrl, logger, {
       confirmationCopy: resolveExternalWorkspaceConfirmationCopy(),
-      resolveApplicationWindow: () => getApplicationWindowsExcludingCuaIndicator()[0] ?? null,
+      resolveApplicationWindow: () => getMainApplicationWindows()[0] ?? null,
     });
   }
 });

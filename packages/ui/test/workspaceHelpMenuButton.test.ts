@@ -14,6 +14,8 @@ vi.mock("@/i18n/IntlProvider.js", () => ({
 }));
 
 const captured = vi.hoisted(() => ({
+  zhiliu: false,
+  vulnerabilityQueryEnabled: undefined as boolean | undefined,
   zsrcUrl: null as string | null,
   loading: false,
   openExternal: vi.fn(),
@@ -33,6 +35,13 @@ const captured = vi.hoisted(() => ({
     labelValues: undefined,
   },
   executeDesktopCommand: vi.fn(async () => undefined),
+}));
+
+vi.mock("@zcode/shared", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@zcode/shared")>()),
+  get ZHILIU_DESKTOP_ENABLED() {
+    return captured.zhiliu;
+  },
 }));
 
 vi.mock("@/components/ui/dropdown-menu.js", () => ({
@@ -101,7 +110,10 @@ vi.mock("@/hooks/usePlatform.js", () => ({
 }));
 
 vi.mock("@/hooks/useVulnerabilityReportUrl.js", () => ({
-  useVulnerabilityReportUrl: () => ({ url: captured.zsrcUrl, loading: captured.loading }),
+  useVulnerabilityReportUrl: (enabled: boolean) => {
+    captured.vulnerabilityQueryEnabled = enabled;
+    return { url: captured.zsrcUrl, loading: captured.loading };
+  },
 }));
 
 describe("WorkspaceHelpMenuButton", () => {
@@ -114,6 +126,32 @@ describe("WorkspaceHelpMenuButton", () => {
     const { WorkspaceHelpMenuButton } = await import("@/WorkspaceHelpMenuButton.js");
     return renderToStaticMarkup(createElement(WorkspaceHelpMenuButton, { isDesktop }));
   }
+
+  it("织流隐藏上游报告和配置入口，保留本机管理操作", async () => {
+    captured.zhiliu = true;
+    captured.zsrcUrl = "https://security.example.test/report";
+    try {
+      const html = await render(true);
+      for (const name of [
+        "docs",
+        "community",
+        "issueReport",
+        "productRequest",
+        "reportVulnerability",
+      ]) {
+        expect(html).not.toContain(`workspaceHeader.help.${name}`);
+      }
+      expect(html).not.toContain("titleBar.menu.help.checkForUpdates");
+      expect(html).toContain("titleBar.menu.help.resourceManager");
+      expect(html).toContain("titleBar.menu.help.exportLogs");
+      expect(html).toContain("titleBar.menu.help.about");
+      expect(captured.vulnerabilityQueryEnabled).toBe(false);
+      expect(captured.openExternal).not.toHaveBeenCalled();
+    } finally {
+      captured.zhiliu = false;
+      captured.zsrcUrl = null;
+    }
+  });
 
   it("桌面和 Web 的漏洞入口紧跟问题上报，打开配置地址；缺失时隐藏", async () => {
     for (const desktop of [true, false]) {

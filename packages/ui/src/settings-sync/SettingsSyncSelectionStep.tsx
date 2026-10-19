@@ -1,6 +1,10 @@
 import { useMemo } from "react";
 import { CheckIcon, MinusIcon } from "lucide-react";
-import type { SettingsSyncCategory, SettingsSyncDiscoveryResult } from "@zcode/shared";
+import {
+  ZHILIU_DESKTOP_ENABLED,
+  type SettingsSyncCategory,
+  type SettingsSyncDiscoveryResult,
+} from "@zcode/shared";
 import { cn } from "@/components/lib/utils.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { renderProviderCliIcon } from "@/lib/providerCliIcon.js";
@@ -9,7 +13,9 @@ function getSelectionKey(agent: string, category: string): string {
   return `${agent}:${category}`;
 }
 
-const CATEGORY_ORDER: SettingsSyncCategory[] = ["providers", "skills"];
+const CATEGORY_ORDER: SettingsSyncCategory[] = ZHILIU_DESKTOP_ENABLED
+  ? ["skills"]
+  : ["providers", "skills"];
 
 function unionCategories(agents: SettingsSyncDiscoveryResult["agents"]): SettingsSyncCategory[] {
   const found = new Set<SettingsSyncCategory>();

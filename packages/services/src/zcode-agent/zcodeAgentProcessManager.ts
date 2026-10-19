@@ -24,7 +24,9 @@ import {
   resolveWorkspaceKey,
   resolveZCodeRuntimeEnv,
   sanitizeZCodeRuntimeEnv,
+  ZHILIU_DESKTOP_ENABLED,
 } from "@zcode/shared";
+import { DesktopInferenceUnavailableError } from "../zhiliu/managedModelPolicy.js";
 import {
   findZCodeAgentRuntimeBinary,
   findZCodeAgentRuntimeNodeBundle,
@@ -842,6 +844,9 @@ export class ZCodeAgentProcessManager {
     workspacePath: string;
     workspaceIdentity?: string;
   }): Promise<ZCodeProtocolClient> {
+    // CLI 即使只读启动也会解析 HOME/项目/env 的模型配置；托管网关未接通前必须在
+    // 命令解析、环境读取和子进程启动之前统一拒绝，不能仅依赖 UI 或 readiness。
+    if (ZHILIU_DESKTOP_ENABLED) throw new DesktopInferenceUnavailableError();
     if (this.disposed) {
       throw new Error("ZCode agent process manager is disposed.");
     }

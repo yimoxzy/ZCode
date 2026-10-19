@@ -9,6 +9,7 @@ import type {
 } from "@zcode/provider";
 import { AccountProviderService, createAccountProviderConfigResolver } from "@zcode/provider";
 import {
+  ZHILIU_DESKTOP_ENABLED,
   type ApiClient,
   type ProviderFamilyConnectionSelectionSettings,
   type ProviderFamilyDomain,
@@ -85,6 +86,24 @@ export function createAccountProviderConnectionResolver(
 ): AccountProviderConnectionResolver {
   let previousScopes = new Map<string, string>();
   return async ({ configuredProviders, reasons = [] }) => {
+    if (ZHILIU_DESKTOP_ENABLED) {
+      // 官方账号权益与织流租户套餐无关；不能读取旧凭据再触发上游查询。
+      return Object.freeze(
+        configuredProviders
+          .entries()
+          .flatMap(([providerId, config]) =>
+            config.access?.type === "zhipu-account"
+              ? [
+                  {
+                    providerId,
+                    status: "unavailable" as const,
+                    unavailableReason: "not-connected" as const,
+                  },
+                ]
+              : [],
+          ),
+      );
+    }
     const settings = structuredClone(await options.readSettings());
     const forceCredentialRefresh = reasons.some(isCredentialRefreshReason);
     const accountIdentityByFamily = new Map<ProviderFamilyDomain, Promise<string | null>>();
@@ -296,6 +315,18 @@ export function createCodingPlanFamilyAvailabilityResolver(
   options: CodingPlanFamilyAvailabilityResolverOptions,
 ): AccountProviderFamilyAvailabilityResolver {
   return ({ family, providers, selections }) => {
+    if (ZHILIU_DESKTOP_ENABLED)
+      return Promise.resolve(
+        Object.fromEntries(
+          providers.map((provider) => [
+            provider.providerId,
+            {
+              kind: "unavailable" as const,
+              reason: "coding_plan_not_connected" as const,
+            },
+          ]),
+        ),
+      );
     const context = {
       apiClient: options.apiClient,
       credentialService: options.credentialService,
@@ -318,6 +349,7 @@ export async function resolveCurrentAccountAccess(input: {
   readonly readSettings: () => Promise<AccountProviderConnectionSettings>;
   readonly loadAccountIdentity: (family: ProviderFamilyDomain) => Promise<string | null>;
 }): Promise<ZCodeAccountAccess | null> {
+  if (ZHILIU_DESKTOP_ENABLED) return null;
   const settings = await input.readSettings();
   const { accountType, mode } = input.access;
   if (settings.providerFamilyDomain !== accountType) return null;

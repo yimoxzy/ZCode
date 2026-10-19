@@ -14,3 +14,7 @@ third-party/runtime/*.txt -text -whitespace
 docs/knip/docs/LICENSE -text -whitespace
 docs/knip/docs/licenses/** -text -whitespace
 third-party/inventory.json linguist-generated=true
+
+# Gen UI 固定快照的 SHA-256 针对原始字节；Windows autocrlf 不能改变资源或许可。
+apps/zcode-cli/packages/visualize-plugin/skills/visualize/assets/** -text
+packages/desktop/src/renderer/src/plugin-sandbox/genUiTweakRuntime.js -text

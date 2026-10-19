@@ -4,6 +4,7 @@ import { Worker } from "node:worker_threads";
 import { createInterface } from "node:readline";
 import { z } from "zod";
 import {
+  ZHILIU_DESKTOP_ENABLED,
   databaseStartupErrorCodeSchema,
   databaseMigrationFactsSchema,
   type DatabaseMigrationFacts,
@@ -11,7 +12,10 @@ import {
   zcodeStoragePreparationFrameSchema,
   type DatabaseStartupState,
 } from "@zcode/shared";
-import { resolveDefaultZCodeAgentCommand } from "@zcode/services/storage-startup";
+import {
+  DesktopInferenceUnavailableError,
+  resolveDefaultZCodeAgentCommand,
+} from "@zcode/services/storage-startup";
 
 type Phase = NonNullable<DatabaseStartupState["databasePhase"]>;
 const workerMessageSchema = z.discriminatedUnion("type", [
@@ -118,6 +122,7 @@ export async function prepareSessionStorage(options: {
   preparedPaths?: Set<string>;
   observePath: (path: string) => Promise<void>;
 }): Promise<void> {
+  if (ZHILIU_DESKTOP_ENABLED) throw new DesktopInferenceUnavailableError();
   const command = resolveDefaultZCodeAgentCommand({
     workspacePath: options.cwd,
     workspaceKey: options.cwd,

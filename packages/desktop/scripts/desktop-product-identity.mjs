@@ -23,6 +23,15 @@ const PREVIEW_IDENTITY = Object.freeze({
   cuaHelperInstallVariant: "preview",
 });
 
+const ZHILIU_IDENTITY = Object.freeze({
+  flavor: "production",
+  appId: "ai.zhiliu.desktop",
+  productName: "织流",
+  linuxExecutableName: "zhiliu",
+  linuxPackageName: "zhiliu",
+  cuaHelperInstallVariant: null,
+});
+
 export const desktopProductIdentities = Object.freeze({
   production: PRODUCTION_IDENTITY,
   preview: PREVIEW_IDENTITY,
@@ -64,6 +73,7 @@ export function resolveDesktopProductFlavor(env = process.env) {
 }
 
 export function resolveDesktopProductIdentity(env = process.env) {
+  if (env.ZHILIU_DESKTOP === "1") return ZHILIU_IDENTITY;
   return desktopProductIdentities[resolveDesktopProductFlavor(env)];
 }
 
@@ -90,5 +100,6 @@ export function resolveWindowsAppUserModelIdForFlavor(flavor, runtime = { isPack
 }
 
 export function resolveWindowsAppUserModelId(env = process.env, runtime = { isPackaged: true }) {
+  if (env.ZHILIU_DESKTOP === "1") return ZHILIU_IDENTITY.appId;
   return resolveWindowsAppUserModelIdForFlavor(resolveDesktopProductFlavor(env), runtime);
 }

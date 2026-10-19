@@ -1,5 +1,6 @@
 /* eslint-disable max-lines -- onboarding 弹窗集中编排欢迎页、会话迁移、外部导入和最终执行状态，拆开会增加跨步骤状态传递复杂度 */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ZHILIU_DESKTOP_ENABLED } from "@zcode/shared";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog.js";
 import { useClaudeSessionMigration } from "@/hooks/useClaudeSessionMigration.js";
 import { useConfirmDialog } from "@/hooks/useConfirmDialog.js";
@@ -47,7 +48,11 @@ const ONBOARDING_STEP_ORDER: OnboardingWizardStep[] = [
   "migration",
 ];
 
-export function OnboardingDialog(props: {
+export function OnboardingDialog(props: Parameters<typeof OnboardingDialogImpl>[0]) {
+  return ZHILIU_DESKTOP_ENABLED ? null : <OnboardingDialogImpl {...props} />;
+}
+
+function OnboardingDialogImpl(props: {
   workspacePath?: string;
   workspaceIdentity?: string;
   isDesktop?: boolean;

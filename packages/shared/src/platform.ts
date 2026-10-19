@@ -596,6 +596,7 @@ export interface BindRemoteWorkspaceSessionContextRequest {
 }
 
 export const DesktopCommandIds = {
+  OpenZhiliuCloud: "openZhiliuCloud",
   NewTask: "newTask",
   OpenWorkspace: "openWorkspace",
   CloseActiveContext: "closeActiveContext",

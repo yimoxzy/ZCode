@@ -17,6 +17,7 @@ import { dirname, join, posix } from "node:path";
 import { Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { ZipFile } from "yazl";
+import { ZHILIU_DESKTOP_ENABLED } from "@zcode/shared";
 
 import {
   createFeedbackDiagnosticArchive,
@@ -24,6 +25,7 @@ import {
   getExportLogDir as getDefaultExportLogDir,
   getExportLogStageDir as getDefaultExportLogStageDir,
   getFeedbackLogArchiveDir as getDefaultFeedbackLogArchiveDir,
+  getZCodeDataRootDir,
 } from "@zcode/services/node";
 import { createAboutSnapshot, formatAboutDetail, readBuildMetadata } from "./about.js";
 import { logger } from "./logger.js";
@@ -33,7 +35,9 @@ function getZCodeDataDir() {
 }
 
 function getZCodeCliDir() {
-  return join(homedir(), ".zcode", "cli");
+  // 织流不得在手动导出日志时读取同机原 ZCode 的配置、会话轨迹或凭据。
+  const root = ZHILIU_DESKTOP_ENABLED ? getZCodeDataRootDir() : join(homedir(), ".zcode");
+  return join(root, "cli");
 }
 
 function getZCodeCliLogDir() {
@@ -46,7 +50,8 @@ function getZCodeCliLogDir() {
  * helperExitLogPathFor）。同目录下还有 `.tokens` broker 凭据，收集时必须按文件名白名单。
  */
 function getCuaHelperRunDir() {
-  return join(homedir(), ".zcode", "computer-use", "run");
+  const root = ZHILIU_DESKTOP_ENABLED ? getZCodeDataRootDir() : join(homedir(), ".zcode");
+  return join(root, "computer-use", "run");
 }
 
 function isCuaHelperDiagnosticFileName(fileName: string): boolean {
@@ -974,11 +979,14 @@ export async function createLogArchiveArtifacts(
   // 排查 agent CLI 问题还需要它的运行配置与模型 IO 轨迹。
   // config.json 是当前生效配置；rollout 是 model-io 调用轨迹，
   // 二者都不在 ~/.zcode/cli/log 下，需要额外收集才能完整还原现场。
-  await collectLogArchiveFile(
-    join(zcodeCliDir, "config.json"),
-    posix.join(".zcode", "cli", "config.json"),
-    files,
-  );
+  // 织流不执行个人模型配置；任意命名的凭据不能靠字段脱敏穷举，故不收集整份 CLI 配置。
+  if (!ZHILIU_DESKTOP_ENABLED) {
+    await collectLogArchiveFile(
+      join(zcodeCliDir, "config.json"),
+      posix.join(".zcode", "cli", "config.json"),
+      files,
+    );
+  }
   await collectLogArchiveFilesFromDirectory(
     join(zcodeCliDir, "rollout"),
     posix.join(".zcode", "cli", "rollout"),
@@ -1145,13 +1153,17 @@ export async function createFeedbackLogArchiveFromExportLogs(
     sources: [
       { directory: join(sourceDir, "logs"), archivePrefix: "logs" },
       { directory: getZCodeCliLogDir(), archivePrefix: ".zcode/cli/log" },
-      {
-        directory: getZCodeCliDir(),
-        archivePrefix: ".zcode/cli",
-        includeFileNames: ["config.json"],
-        onlyCurrentDay: false,
-        contentPolicy: "cli-config",
-      },
+      ...(!ZHILIU_DESKTOP_ENABLED
+        ? [
+            {
+              directory: getZCodeCliDir(),
+              archivePrefix: ".zcode/cli",
+              includeFileNames: ["config.json"],
+              onlyCurrentDay: false,
+              contentPolicy: "cli-config" as const,
+            },
+          ]
+        : []),
       {
         directory: join(getZCodeCliDir(), "rollout"),
         archivePrefix: ".zcode/cli/rollout",

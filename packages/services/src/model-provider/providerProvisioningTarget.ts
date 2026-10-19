@@ -10,6 +10,7 @@ import {
   providerProvisioningEnvelopeSchema,
   providerProvisioningResultSchema,
   isProviderProvisioningAccountCredentialKey,
+  ZHILIU_DESKTOP_ENABLED,
   type ProviderProvisioningEnvelope,
   type ProviderProvisioningResult,
   type ProviderProvisioningErrorCode,
@@ -19,6 +20,7 @@ import type { ISettingService } from "../setting/setting.js";
 import type { ProviderRuntime } from "./providerRuntime.js";
 import type { AccountProviderService } from "@zcode/provider";
 import type { IProviderProvisioningTargetService } from "./providerProvisioning.js";
+import { rejectPersonalModelOperation } from "../zhiliu/managedModelPolicy.js";
 import {
   PROVIDER_PROVISIONING_OAUTH_CREDENTIAL_KEYS,
   readProvisionablePersonalConfig,
@@ -53,6 +55,7 @@ interface ProvisioningStateFile {
 export function createProviderProvisioningTarget(
   options: ProviderProvisioningTargetOptions,
 ): IProviderProvisioningTargetService {
+  if (ZHILIU_DESKTOP_ENABLED) return { apply: rejectPersonalModelOperation };
   return {
     async apply(input: ProviderProvisioningEnvelope): Promise<ProviderProvisioningResult> {
       const envelope = providerProvisioningEnvelopeSchema.parse(input);

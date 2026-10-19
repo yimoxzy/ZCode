@@ -7,6 +7,7 @@ import {
   ZCODE_BUILD_TIME,
   ZCODE_COMMIT,
   ZCODE_VERSION,
+  ZHILIU_DESKTOP_ENABLED,
 } from "@zcode/shared";
 import { Emitter } from "@zcode/rpc";
 import { arch, platform, release, type as osType } from "node:os";
@@ -18,6 +19,7 @@ import { FeedbackHttpClient, FeedbackUploadCanceledError } from "./feedbackHttpC
 import { cleanupLogArchive, prepareCompactLogArchive } from "./compactLogArchive.js";
 import { getFeedbackAttachmentDir } from "../paths.js";
 import { FeedbackLocalTicketStore } from "#src/feedback/feedbackLocalTicketStore.js";
+import { rejectOfficialCloudOperation } from "../zhiliu/officialCloudPolicy.js";
 
 const ZCODE_JWT_TOKEN_KEY = "zcodejwttoken";
 
@@ -60,6 +62,74 @@ function buildDeviceSnapshot(): FeedbackDeviceInfo {
 }
 
 export function createFeedbackService(options: CreateFeedbackServiceOptions): IFeedbackService {
+  const uploadProgressEmitters = new Map<string, Emitter<FeedbackUploadProgress>>();
+
+  function getUploadProgressEmitter(id: string): Emitter<FeedbackUploadProgress> {
+    const current = uploadProgressEmitters.get(id);
+    if (current) return current;
+    const emitter = new Emitter<FeedbackUploadProgress>({
+      onDidRemoveLastListener: () => {
+        uploadProgressEmitters.delete(id);
+        emitter.dispose();
+      },
+    });
+    uploadProgressEmitters.set(id, emitter);
+    return emitter;
+  }
+
+  const localOperations: Pick<
+    IFeedbackService,
+    | "onDynamicUploadProgress"
+    | "getDeviceSnapshot"
+    | "prepareCompactLogArchive"
+    | "cleanupPreparedLogArchive"
+    | "revealLogArchive"
+  > = {
+    onDynamicUploadProgress: (id) => getUploadProgressEmitter(id).event,
+    getDeviceSnapshot: async () => buildDeviceSnapshot(),
+    prepareCompactLogArchive: async (archiveOptions) => {
+      const progressId = archiveOptions?.progressId;
+      const progressEmitter = progressId ? getUploadProgressEmitter(progressId) : null;
+      return prepareCompactLogArchive({
+        full: archiveOptions?.full,
+        createFullArchive: options.createFullLogArchive,
+        onProgress: progressEmitter
+          ? (event) => {
+              progressEmitter.fire({
+                id: progressId!,
+                phase: "preparing",
+                uploadedBytes: event.processedBytes,
+                totalBytes: event.totalBytes,
+              });
+            }
+          : undefined,
+      });
+    },
+    cleanupPreparedLogArchive: (path) => cleanupLogArchive(path),
+    revealLogArchive: async (path) => {
+      if (options.revealPath) {
+        await options.revealPath(path);
+      }
+    },
+  };
+
+  // 织流不能装配官方反馈客户端或读取旧凭据；本地日志操作与远端工单明确分离。
+  if (ZHILIU_DESKTOP_ENABLED) {
+    return {
+      ...localOperations,
+      create: rejectOfficialCloudOperation,
+      list: rejectOfficialCloudOperation,
+      get: rejectOfficialCloudOperation,
+      comment: rejectOfficialCloudOperation,
+      uploadAttachment: rejectOfficialCloudOperation,
+      uploadAttachmentWithProgress: rejectOfficialCloudOperation,
+      uploadAttachmentData: rejectOfficialCloudOperation,
+      attachLogsFromExport: rejectOfficialCloudOperation,
+      cancelCreate: async () => {},
+      cancelUpload: async () => {},
+    };
+  }
+
   const apiBaseUrl = resolveApiBaseUrl(options.apiBaseUrl);
   function getHostDeviceMid(): string | undefined {
     return options.getDeviceMid?.()?.trim() || undefined;
@@ -100,24 +170,11 @@ export function createFeedbackService(options: CreateFeedbackServiceOptions): IF
     },
   });
   const localTicketStore = new FeedbackLocalTicketStore();
-  const uploadProgressEmitters = new Map<string, Emitter<FeedbackUploadProgress>>();
   const activeUploadControllers = new Map<string, AbortController>();
   const activeCreateControllers = new Map<string, AbortController>();
 
-  function getUploadProgressEmitter(id: string): Emitter<FeedbackUploadProgress> {
-    const current = uploadProgressEmitters.get(id);
-    if (current) return current;
-    const emitter = new Emitter<FeedbackUploadProgress>({
-      onDidRemoveLastListener: () => {
-        uploadProgressEmitters.delete(id);
-        emitter.dispose();
-      },
-    });
-    uploadProgressEmitters.set(id, emitter);
-    return emitter;
-  }
-
   return {
+    ...localOperations,
     create: async (input, createOptions) => {
       const device = input.device ?? buildDeviceSnapshot();
       const operationId = createOptions?.operationId?.trim();
@@ -212,7 +269,6 @@ export function createFeedbackService(options: CreateFeedbackServiceOptions): IF
     cancelUpload: async (progressId) => {
       activeUploadControllers.get(progressId)?.abort();
     },
-    onDynamicUploadProgress: (id) => getUploadProgressEmitter(id).event,
     uploadAttachmentData: async (id, kind, file) => {
       const attachmentRootDir = getFeedbackAttachmentDir();
       await mkdir(attachmentRootDir, { recursive: true });
@@ -244,32 +300,6 @@ export function createFeedbackService(options: CreateFeedbackServiceOptions): IF
         );
       } finally {
         await cleanupLogArchive(archive.path);
-      }
-    },
-    getDeviceSnapshot: async () => buildDeviceSnapshot(),
-    prepareCompactLogArchive: async (archiveOptions) => {
-      const progressId = archiveOptions?.progressId;
-      const progressEmitter = progressId ? getUploadProgressEmitter(progressId) : null;
-      return prepareCompactLogArchive({
-        full: archiveOptions?.full,
-        createFullArchive: options.createFullLogArchive,
-        onProgress: progressEmitter
-          ? (event) => {
-              progressEmitter.fire({
-                id: progressId!,
-                phase: "preparing",
-                uploadedBytes: event.processedBytes,
-                totalBytes: event.totalBytes,
-              });
-            }
-          : undefined,
-      });
-    },
-    cleanupPreparedLogArchive: (path) => cleanupLogArchive(path),
-    revealLogArchive: async (path) => {
-      if (options.revealPath) {
-        await options.revealPath(path);
-        return;
       }
     },
   };

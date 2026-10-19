@@ -2,6 +2,7 @@ import {
   buildZCodeEndpointUrls,
   clientConfigReadOptionsSchema,
   parseClientConfigSnapshot,
+  ZHILIU_DESKTOP_ENABLED,
   type ApiClient,
   type ClientConfigSnapshot,
 } from "@zcode/shared";
@@ -65,6 +66,10 @@ export function createClientConfigService(dependencies: {
   return {
     async getSnapshot(options = {}) {
       const { forceRefresh } = clientConfigReadOptionsSchema.parse(options);
+      // 织流不加载官方公开配置；提前返回避免解析旧上游端点或触发刷新请求。
+      if (ZHILIU_DESKTOP_ENABLED) {
+        return parseClientConfigSnapshot({ code: 0, data: { configs: {} } });
+      }
       const context = await dependencies.resolveRequestContext();
       const url = new URL(
         "/api/v1/client/configs",

@@ -9,6 +9,7 @@ import type {
 } from "@zcode/shared";
 import {
   BUILTIN_MODEL_PROVIDER_IDS,
+  ZHILIU_DESKTOP_ENABLED,
   isStartPlanModelProviderId,
   resolveModelProviderFamilySpecByProviderId,
   resolveProviderFamilyDomainFromOAuthProvider,
@@ -91,8 +92,10 @@ export function useModelProviderNavigation({
 
   const codingPlanItems = useMemo(
     () =>
-      CODING_PLAN_PROVIDER_SPECS.filter((spec) =>
-        shouldShowCodingPlanForProviderFamilyDomain(spec.oauthProviderId, providerFamilyDomain),
+      CODING_PLAN_PROVIDER_SPECS.filter(
+        (spec) =>
+          !ZHILIU_DESKTOP_ENABLED &&
+          shouldShowCodingPlanForProviderFamilyDomain(spec.oauthProviderId, providerFamilyDomain),
       ).map((spec) => {
         const provider = modelProviders.find((item) => item.providerId === spec.id) ?? null;
         const accountEntitled = entitledAccountProviderIds.has(spec.id);
@@ -223,7 +226,8 @@ export function useModelProviderNavigation({
       },
     ];
 
-    return groups;
+    // 织流仅显示用户自建的模型服务；上游账号套餐不是织流订阅，也不是本地 BYOK。
+    return ZHILIU_DESKTOP_ENABLED ? groups.filter((group) => group.id === "custom") : groups;
   }, [
     customProviders,
     codingPlanItems,

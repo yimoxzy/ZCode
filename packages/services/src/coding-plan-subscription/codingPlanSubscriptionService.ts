@@ -1,4 +1,9 @@
-import { applyDynamicWorkflowUserMode, type ApiClient } from "@zcode/shared";
+import {
+  applyDynamicWorkflowUserMode,
+  ZHILIU_DESKTOP_ENABLED,
+  type ApiClient,
+} from "@zcode/shared";
+import { createDisabledSubscriptionService } from "../zhiliu/disabledSubscriptionService.js";
 import type { ICredentialService } from "../credential/credential.js";
 import type { ICodingPlanSubscriptionService } from "./codingPlanSubscription.js";
 import { BigModelCodingPlanSubscriptionProvider } from "./bigmodelCodingPlanSubscriptionProvider.js";
@@ -33,6 +38,7 @@ interface CodingPlanSubscriptionServiceDependencies {
 export function createCodingPlanSubscriptionService(
   dependencies: CodingPlanSubscriptionServiceDependencies,
 ): ICodingPlanSubscriptionService {
+  if (ZHILIU_DESKTOP_ENABLED) return createDisabledSubscriptionService();
   const bigmodelProvider = new BigModelCodingPlanSubscriptionProvider(dependencies);
   const zaiProvider = new ZaiCodingPlanSubscriptionProvider(dependencies);
 

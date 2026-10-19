@@ -6,6 +6,7 @@ import {
   type ApiClient,
   BIGMODEL_PROVIDER_ID,
   ZAI_PROVIDER_ID,
+  ZHILIU_DESKTOP_ENABLED,
   type OAuthCallbackResult,
   type OAuthCachedSessionRestoreResult,
   type OAuthProviderId,
@@ -29,6 +30,7 @@ import {
 import { createOAuthProviderAdapters, type OAuthProviderAdapter } from "./providers/index.js";
 import { OAuthCredentialRepo } from "./repo/oauthCredentialRepo.js";
 import { createOAuthRuntimeConfig } from "./runtimeConfig.js";
+import { OfficialCloudDisabledError } from "../zhiliu/officialCloudPolicy.js";
 import {
   buildDesktopOAuthRedirectUriFromEnv,
   buildZCodeApiUrlFromEnv,
@@ -144,11 +146,12 @@ export class OAuthService implements IOAuthService {
     this.apiClient = dependencies.apiClient;
     this.env = dependencies.env ?? process.env;
 
-    const adapters =
-      dependencies.adapters ??
-      createOAuthProviderAdapters(createOAuthRuntimeConfig(dependencies.env), {
-        apiClient: dependencies.apiClient,
-      });
+    const adapters = ZHILIU_DESKTOP_ENABLED
+      ? []
+      : (dependencies.adapters ??
+        createOAuthProviderAdapters(createOAuthRuntimeConfig(dependencies.env), {
+          apiClient: dependencies.apiClient,
+        }));
 
     for (const adapter of adapters) {
       this.adapters.set(adapter.providerId, adapter);
@@ -164,6 +167,7 @@ export class OAuthService implements IOAuthService {
   }
 
   async getProviders(): Promise<OAuthProviderMeta[]> {
+    if (ZHILIU_DESKTOP_ENABLED) return [];
     return [...this.adapters.values()]
       .map((adapter) => adapter.meta)
       .filter((meta) => meta.enabled)
@@ -171,6 +175,7 @@ export class OAuthService implements IOAuthService {
   }
 
   async getActiveProvider(): Promise<OAuthProviderId | null> {
+    if (ZHILIU_DESKTOP_ENABLED) return null;
     return this.repo.getActiveProvider();
   }
 
@@ -180,6 +185,7 @@ export class OAuthService implements IOAuthService {
   }
 
   async restoreCachedSessionState(): Promise<OAuthCachedSessionRestoreResult> {
+    if (ZHILIU_DESKTOP_ENABLED) return { status: "signed-out" };
     const restoreGeneration = this.oauthSessionGeneration;
     const activeProvider = await this.repo.getActiveProvider();
     if (!activeProvider) {
@@ -514,6 +520,7 @@ export class OAuthService implements IOAuthService {
   }
 
   async restoreSession(): Promise<UserInfo | null> {
+    if (ZHILIU_DESKTOP_ENABLED) return null;
     const activeProvider = await this.repo.getActiveProvider();
     if (!activeProvider) {
       log("restoreSession skipped: no active provider");
@@ -588,10 +595,12 @@ export class OAuthService implements IOAuthService {
   }
 
   async startOAuth(provider: OAuthProviderId): Promise<OAuthStartResponse> {
+    if (ZHILIU_DESKTOP_ENABLED) throw new OfficialCloudDisabledError();
     return this.startOAuthInternal(provider);
   }
 
   async startOAuthWithPolling(provider: OAuthProviderId): Promise<OAuthStartResponse> {
+    if (ZHILIU_DESKTOP_ENABLED) throw new OfficialCloudDisabledError();
     if (provider !== ZAI_PROVIDER_ID && provider !== BIGMODEL_PROVIDER_ID) {
       return this.startOAuthInternal(provider);
     }
@@ -699,6 +708,7 @@ export class OAuthService implements IOAuthService {
   }
 
   async pollPendingOAuth(): Promise<OAuthCallbackResult | null> {
+    if (ZHILIU_DESKTOP_ENABLED) return null;
     const apiClient = this.apiClient;
     if (!apiClient) {
       return null;
@@ -864,6 +874,7 @@ export class OAuthService implements IOAuthService {
   }
 
   async handleCallback(url: string): Promise<OAuthCallbackResult | null> {
+    if (ZHILIU_DESKTOP_ENABLED) return null;
     const pending = this.pendingState;
     if (!pending) {
       const callbackState = new URL(url).searchParams.get("state")?.trim();
@@ -962,6 +973,7 @@ export class OAuthService implements IOAuthService {
   }
 
   async refreshToken(provider?: OAuthProviderId): Promise<void> {
+    if (ZHILIU_DESKTOP_ENABLED) throw new OfficialCloudDisabledError();
     const generation = this.oauthSessionGeneration;
     const targetProvider = await this.resolveProvider(provider);
     if (!targetProvider) {
@@ -1009,6 +1021,7 @@ export class OAuthService implements IOAuthService {
 
   /** Host 本地 401 提交入口，不扩展 IOAuthService 的跨端契约。 */
   logoutIfCurrentCredentialRequest(input: string | URL, headers: Headers): Promise<boolean> {
+    if (ZHILIU_DESKTOP_ENABLED) return Promise.resolve(false);
     return this.logoutActiveSession(() =>
       isCurrentOAuthCredentialRequest({
         input,
@@ -1047,6 +1060,7 @@ export class OAuthService implements IOAuthService {
   }
 
   async logout(provider?: OAuthProviderId): Promise<void> {
+    if (ZHILIU_DESKTOP_ENABLED) return;
     if (!provider) {
       await this.logoutActiveSession();
       return;
@@ -1071,6 +1085,7 @@ export class OAuthService implements IOAuthService {
   }
 
   async logoutAll(): Promise<void> {
+    if (ZHILIU_DESKTOP_ENABLED) return;
     const providers = [...this.adapters.keys()];
     const accountIdentities = await this.runSessionMutation(async () => {
       const identities = new Map<OAuthProviderId, string | null>();
@@ -1086,6 +1101,7 @@ export class OAuthService implements IOAuthService {
   }
 
   async cancelPending(provider?: OAuthProviderId): Promise<void> {
+    if (ZHILIU_DESKTOP_ENABLED) return;
     if (!this.pendingState) {
       if (provider && this.oauthFlowStartProvider && this.oauthFlowStartProvider !== provider)
         return;
@@ -1186,8 +1202,10 @@ export function createOAuthService(
 ): OAuthService {
   return new OAuthService(credentialService, {
     ...dependencies,
-    adapters: createOAuthProviderAdapters(createOAuthRuntimeConfig(dependencies.env), {
-      apiClient: dependencies.apiClient,
-    }),
+    adapters: ZHILIU_DESKTOP_ENABLED
+      ? []
+      : createOAuthProviderAdapters(createOAuthRuntimeConfig(dependencies.env), {
+          apiClient: dependencies.apiClient,
+        }),
   });
 }

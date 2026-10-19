@@ -21,12 +21,14 @@ import {
   TID_AUTOMATIONS_STATUS_FILTER,
   TID_OFFPEAK_CREATE_BUTTON,
   TID_OFFPEAK_TAB,
+  ZHILIU_DESKTOP_ENABLED,
   isAutomationCreateLimitError,
   resolveWorkspaceKey,
   type ZCodeAutomation,
   type ZCodeOffPeakTask,
 } from "@zcode/shared";
 import { Button } from "@/components/ui/button.js";
+import { ZhiliuCloudAccessNotice } from "@/root/ZhiliuCloudAccessNotice.js";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -513,7 +515,15 @@ function AutomationStatusFilterEmpty() {
   );
 }
 
-export function AutomationsSection({
+export function AutomationsSection(props: AutomationsSectionProps) {
+  return ZHILIU_DESKTOP_ENABLED ? (
+    <ZhiliuCloudAccessNotice />
+  ) : (
+    <AutomationsSectionImpl {...props} />
+  );
+}
+
+function AutomationsSectionImpl({
   workspacePath,
   workspaceIdentity,
   onCreateViaChat,

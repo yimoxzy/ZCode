@@ -22,7 +22,8 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs.js";
 import { Switch } from "@/components/ui/switch.js";
 import { ControlHintTooltip } from "@/ControlHintTooltip.js";
-import { TID_PLUGIN_STORE_BROWSE } from "@zcode/shared";
+import { TID_PLUGIN_STORE_BROWSE, ZHILIU_DESKTOP_ENABLED } from "@zcode/shared";
+import { ZhiliuCloudAccessNotice } from "@/root/ZhiliuCloudAccessNotice.js";
 import type { ZCodePluginInfo, ZCodePluginScope, ZCodePluginUserConfigOption } from "@zcode/shared";
 import type { CreateTaskRequest } from "@/app-shell/types.js";
 import {
@@ -950,7 +951,11 @@ function EmptyState({ message }: { message: string }) {
   );
 }
 
-export function PluginsSection({
+export function PluginsSection(props: PluginsSectionProps) {
+  return ZHILIU_DESKTOP_ENABLED ? <ZhiliuCloudAccessNotice /> : <PluginsSectionImpl {...props} />;
+}
+
+function PluginsSectionImpl({
   isDesktop = false,
   isMacDesktop = false,
   isWindowsDesktop = false,

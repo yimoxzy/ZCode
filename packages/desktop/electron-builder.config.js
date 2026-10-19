@@ -22,7 +22,10 @@ import {
   resolveDesktopProductIdentity,
 } from "./scripts/desktop-product-identity.mjs";
 import { createWindowsPowerShellSecurityArgs } from "./scripts/powershell-command.mjs";
-import { isSharpRequiredByComputerUse, verifyStagedSharp } from "./scripts/sharp-package-assets.mjs";
+import {
+  isSharpRequiredByComputerUse,
+  verifyStagedSharp,
+} from "./scripts/sharp-package-assets.mjs";
 import { isRealComputerUseProducerInstalled } from "./scripts/computer-use-producer.mjs";
 import { verifyStagedKoffi } from "./scripts/koffi-package-assets.mjs";
 import {
@@ -806,14 +809,17 @@ export default {
   // 打包阶段统一复用安装时准备好的原生文件，避免 electron-builder 再触发一轮不受控的本地编译。
   npmRebuild: false,
   // OAuth deep link 协议注册（macOS 打包后需要 Info.plist 中声明 CFBundleURLTypes）
-  protocols: [
-    {
-      // 协议处理器的展示名之前使用小写 scheme，打包产物里的协议描述无法体现产品名。
-      // 展示名跟随安装包身份；scheme 仍保持 zcode，因此两个应用中最后注册者会成为默认 handler。
-      name: desktopProductIdentity.productName,
-      schemes: ["zcode"],
-    },
-  ],
+  protocols:
+    process.env.ZHILIU_DESKTOP === "1"
+      ? []
+      : [
+          {
+            // 协议处理器的展示名之前使用小写 scheme，打包产物里的协议描述无法体现产品名。
+            // 展示名跟随安装包身份；scheme 仍保持 zcode，因此两个应用中最后注册者会成为默认 handler。
+            name: desktopProductIdentity.productName,
+            schemes: ["zcode"],
+          },
+        ],
   mac: {
     target: ["dmg", "zip"],
     category: "public.app-category.developer-tools",
@@ -921,6 +927,8 @@ export default {
     ],
   },
   nsis: {
+    // 旧织流测试版使用相同产品名但不同 appId；独立快捷方式避免安装时覆盖它的入口。
+    ...(process.env.ZHILIU_DESKTOP === "1" ? { shortcutName: "织流 SaaS" } : {}),
     oneClick: false,
     allowToChangeInstallationDirectory: true,
     // Windows 安装流程使用独立安装图标，和应用运行时图标解耦。

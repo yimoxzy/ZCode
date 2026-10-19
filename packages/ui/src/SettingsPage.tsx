@@ -26,6 +26,7 @@ import type {
 } from "@zcode/shared";
 import {
   BUILTIN_MODEL_PROVIDER_IDS,
+  ZHILIU_DESKTOP_ENABLED,
   TID_SETTINGS_BACK_BUTTON,
   TID_SETTINGS_PAGE,
   TID_SETTINGS_SECTION_NAV,
@@ -62,6 +63,7 @@ import {
 } from "@/lib/accountProviderAccess.js";
 import { buildUsageEntitlementCacheKey } from "@/lib/usageEntitlementCache.js";
 import { ModelProviderSection } from "@/settings/ModelProviderSection.js";
+import { ZhiliuCloudAccessNotice } from "@/root/ZhiliuCloudAccessNotice.js";
 import { useCodingPlanUpgradeDialog } from "@/settings/CodingPlanUpgradeDialogProvider.js";
 import { useEnterpriseCodingPlanProducts } from "@/settings/model-provider-section/useEnterpriseCodingPlanProducts.js";
 import { UsageStatsSection, type UsageStatsSectionTab } from "@/settings/UsageStatsSection.js";
@@ -1703,7 +1705,21 @@ export function SettingsPage({
                         ) : null}
                       </div>
                       <div className="space-y-8">
-                        {activeSection === "general" ? (
+                        {ZHILIU_DESKTOP_ENABLED &&
+                        [
+                          "modelProvider",
+                          "migration",
+                          "plugin",
+                          "mcp",
+                          "skill",
+                          "commands",
+                          "subagents",
+                          "hooks",
+                          "computerUse",
+                          "automations",
+                        ].includes(activeSection) ? (
+                          <ZhiliuCloudAccessNotice />
+                        ) : activeSection === "general" ? (
                           <GeneralSectionContent
                             localePreference={localePreference}
                             interfaceMode={interfaceMode}

@@ -1,6 +1,7 @@
 import { open } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { ZHILIU_DESKTOP_ENABLED } from "@zcode/shared";
 import { getDataBaseDir } from "#src/paths.js";
 
 // 32 MiB 足以覆盖常规最近调用，同时避免 64/256 MiB 诊断文件造成 Host 内存峰值。
@@ -15,7 +16,8 @@ export interface TrajectoryFileTail {
 // debug（开发态）与 rollout（生产态）都尝试，避免数据目录环境变量差异导致读不到。
 export function resolveModelIODirs(): string[] {
   const roots = new Set<string>([
-    join(homedir(), ".zcode", "cli"),
+    // 相同 session ID 也不能让织流优先读取原 ZCode 的推理内容。
+    ...(!ZHILIU_DESKTOP_ENABLED ? [join(homedir(), ".zcode", "cli")] : []),
     join(getDataBaseDir(), ".zcode", "cli"),
   ]);
   return [...roots].flatMap((root) => [join(root, "debug"), join(root, "rollout")]);

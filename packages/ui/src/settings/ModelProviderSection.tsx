@@ -21,9 +21,11 @@ import {
   resolveModelProviderFamilySpecByProviderId,
   resolveProviderFamilyDomainFromOAuthProvider,
   ZAI_PROVIDER_ID,
+  ZHILIU_DESKTOP_ENABLED,
 } from "@zcode/shared";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { Button } from "@/components/ui/button.js";
+import { ZhiliuCloudAccessNotice } from "@/root/ZhiliuCloudAccessNotice.js";
 import { useConfirmDialog } from "@/hooks/useConfirmDialog.js";
 import { useModelProviders } from "@/hooks/useModelProviders.js";
 import { resolveEntitledAccountProviderAccess } from "@/lib/accountProviderAccess.js";
@@ -234,7 +236,16 @@ export function resolveModelProviderSideSelectionKey(
  * 模型 Provider 设置只由 SettingsPage 注入 Local Host；这里不接收 workspaceIdentity，
  * 防止远程 workspace 误将 Provider Settings 的读写路由到远端 Environment。
  */
-export function ModelProviderSection({
+export function ModelProviderSection(props: Parameters<typeof ModelProviderSectionImpl>[0] = {}) {
+  // 旧设置导航或直接挂载也不能运行个人供应商读写 hooks。
+  return ZHILIU_DESKTOP_ENABLED ? (
+    <ZhiliuCloudAccessNotice />
+  ) : (
+    <ModelProviderSectionImpl {...props} />
+  );
+}
+
+function ModelProviderSectionImpl({
   workspacePath = "",
   connectivityWorkspacePath,
   connectivityWorkspaceRequired = false,

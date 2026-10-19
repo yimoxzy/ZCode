@@ -1,5 +1,5 @@
 import { downloadZCodeBuiltinRelease, type ZCodeBuiltinRelease } from "@zcode/provider-node";
-import type { ApiClient } from "@zcode/shared";
+import { ZHILIU_DESKTOP_ENABLED, type ApiClient } from "@zcode/shared";
 
 export interface FetchZCodeBuiltinRemoteReleaseOptions {
   readonly apiClient: ApiClient;
@@ -13,6 +13,7 @@ export interface FetchZCodeBuiltinRemoteReleaseOptions {
 export async function fetchZCodeBuiltinRemoteRelease(
   options: FetchZCodeBuiltinRemoteReleaseOptions,
 ): Promise<ZCodeBuiltinRelease | null> {
+  if (ZHILIU_DESKTOP_ENABLED) return null;
   return downloadZCodeBuiltinRelease({
     endpointOrigin: options.endpointOrigin,
     appVersion: options.appVersion,

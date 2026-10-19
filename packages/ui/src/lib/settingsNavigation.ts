@@ -1,5 +1,6 @@
 /* eslint-disable max-lines -- 设置导航意图集中管理 sessionStorage、事件桥接和解析校验，拆分会让一次性意图消费顺序更难保证。 */
 import { logger } from "@/logger.js";
+import { ZHILIU_DESKTOP_ENABLED } from "@zcode/shared";
 
 export type SettingsSectionId =
   | "general"
@@ -81,6 +82,10 @@ function isSettingsSectionId(value: string): value is SettingsSectionId {
 }
 
 export function isSettingsSectionEnabled(section: SettingsSectionId): boolean {
+  // 旧导航/偏好也必须遵守托管模型规则，不能仅隐藏侧栏后仍挂载个人配置或迁移页。
+  if (ZHILIU_DESKTOP_ENABLED && (section === "modelProvider" || section === "migration")) {
+    return false;
+  }
   return !HIDDEN_SETTINGS_SECTIONS.has(section);
 }
 

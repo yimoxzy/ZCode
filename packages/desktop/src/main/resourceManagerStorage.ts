@@ -7,12 +7,18 @@
 import { BrowserWindow, ipcMain, shell, type IpcMainInvokeEvent, type WebContents } from "electron";
 import { homedir } from "node:os";
 import { isAbsolute, relative, resolve } from "node:path";
-import { PlatformChannels, type StorageCleanRequest, type StorageRootSpec } from "@zcode/shared";
+import {
+  PlatformChannels,
+  ZHILIU_DESKTOP_ENABLED,
+  type StorageCleanRequest,
+  type StorageRootSpec,
+} from "@zcode/shared";
 import {
   createFsStorageCleaner,
   createStorageRootsResolver,
   createStorageService,
   getDataBaseDir,
+  resolveDefaultDataBaseDir,
   type IStorageService,
 } from "@zcode/services/node";
 import { logger } from "./logger.js";
@@ -21,7 +27,11 @@ import { createStorageScanWorkerRunner } from "./storageScanWorkerClient.js";
 let service: IStorageService | null = null;
 let latestJobId: string | null = null;
 let subscriber: WebContents | null = null;
-const rootsResolver = createStorageRootsResolver({ getHomeDir: homedir, getDataBaseDir });
+// Storage 合同保留 home/custom 双根；织流在装配时注入品牌根，避免扫描和清理旧 ZCode 数据。
+const rootsResolver = createStorageRootsResolver({
+  getHomeDir: () => (ZHILIU_DESKTOP_ENABLED ? resolveDefaultDataBaseDir() : homedir()),
+  getDataBaseDir,
+});
 
 function getService(): IStorageService {
   if (service) return service;

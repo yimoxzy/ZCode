@@ -5,6 +5,7 @@ import armsRum from "@arms/rum-electron";
 import { ZCODE_AGENT_LIFECYCLE_LOG_MARKER } from "@zcode/shared/process-diagnostic";
 import { ZCODE_ARMS_RUM_ENDPOINT, ZCODE_VERSION, mapZCodeEnvToArmsRumEnv } from "@zcode/shared";
 import { ARMS_BROWSER_COLLECTORS, parseArmsViewName } from "../shared/armsRumShared.js";
+import { ARMS_TELEMETRY_ENABLED } from "../shared/armsTelemetryPolicy.js";
 import { redactArmsEventBatch } from "./armsEventRedaction.js";
 import { ensureDesktopDeviceMidSync } from "./desktopDeviceMid.js";
 import { ingestArmsApiEventsFromBatch } from "./desktopNetworkTelemetry.js";
@@ -138,6 +139,12 @@ export function filterAndEnrichNativeCrashEvents(
 // Bugfix: 产品后端可使用 production，但源码启动的 Desktop 仍是本地开发运行态；
 // ARMS 环境必须优先按运行形态标记为 local，避免开发数据污染 prod。
 const armsRumEnv = mapZCodeEnvToArmsRumEnv(desktopRuntimeEnv);
+let armsTelemetryReady = false;
+
+/** Main 的 SDK setter / reporter 只在初始化成功后调用；读取不触发初始化或状态同步。 */
+export function isArmsTelemetryReady(): boolean {
+  return armsTelemetryReady;
+}
 
 // ARMS user.id 字段被 SDK 强制改写为内部随机值（config.user.id 在事件合并时被显式跳过，
 // 无法注入），而 user.name 不受屏蔽。这里把 device_mid 写入 user.name，使 RUM 日志可按
@@ -145,24 +152,26 @@ const armsRumEnv = mapZCodeEnvToArmsRumEnv(desktopRuntimeEnv);
 // ensureDesktopDeviceMidSync 幂等且不重复写盘）。
 // 注意：渲染进程事件经 ArmsEventBridge 转发到主进程后，由主进程 client 用「主进程 config」
 // 重新打包上报，故只需在主进程 init 设置一次，即可覆盖主进程 + 渲染进程的全部上报。
-const armsDeviceMid = ensureDesktopDeviceMidSync();
+async function initializeArmsTelemetry(): Promise<void> {
+  // SDK 在读取 enable=false 前已校验 endpoint 并注册 session/preload；必须完全跳过 init。
+  if (!ARMS_TELEMETRY_ENABLED) return;
+  const armsDeviceMid = ensureDesktopDeviceMidSync();
 
-// 原因：armsRum.init() 返回 Promise；若不 await，web-contents-created / 渲染进程注入可能晚于首窗 dom-ready，导致零上报。
-// 须在 app.whenReady() 创建 BrowserWindow 之前 await armsInitPromise（见 index.ts）。
-// SDK 的 sendCustom 只表示入队，原 request 不检查 HTTP status。
-// 在 init 通过公开 useReporter 安装时包装传输，保留原 SDK 的过滤和序列化链路。
-const useReporter = armsRum.client.useReporter.bind(armsRum.client);
-armsRum.client.useReporter = (reporter) => {
-  const request = reporter.request.bind(reporter);
-  reporter.request = wrapStartupReporterRequest(request, {
-    acknowledged: (eventIds, delivery) =>
-      logger.info("[database-startup] telemetry delivery", { eventIds, delivery }),
-  });
-  useReporter(reporter);
-};
-export const armsInitPromise = armsRum
-  .init({
-    enable: ZCODE_ARMS_RUM_ENDPOINT !== "",
+  // 原因：armsRum.init() 返回 Promise；若不 await，web-contents-created / 渲染进程注入可能晚于首窗 dom-ready，导致零上报。
+  // 须在 app.whenReady() 创建 BrowserWindow 之前 await armsInitPromise（见 index.ts）。
+  // SDK 的 sendCustom 只表示入队，原 request 不检查 HTTP status。
+  // 在 init 通过公开 useReporter 安装时包装传输，保留原 SDK 的过滤和序列化链路。
+  const useReporter = armsRum.client.useReporter.bind(armsRum.client);
+  armsRum.client.useReporter = (reporter) => {
+    const request = reporter.request.bind(reporter);
+    reporter.request = wrapStartupReporterRequest(request, {
+      acknowledged: (eventIds, delivery) =>
+        logger.info("[database-startup] telemetry delivery", { eventIds, delivery }),
+    });
+    useReporter(reporter);
+  };
+  await armsRum.init({
+    enable: true,
     version: ZCODE_VERSION,
     endpoint: ZCODE_ARMS_RUM_ENDPOINT,
     env: armsRumEnv,
@@ -247,11 +256,22 @@ export const armsInitPromise = armsRum
       }
       return payload;
     },
-  })
-  .then(() => {
-    logger.info(`[arms] electron initialized env=${armsRumEnv} version=${ZCODE_VERSION}`);
-  })
-  .catch((error) => {
-    logger.error("[arms] electron init failed:", error);
-    throw error;
   });
+  armsTelemetryReady = true;
+  logger.info(`[arms] electron initialized env=${armsRumEnv} version=${ZCODE_VERSION}`);
+}
+
+export const armsInitPromise = initializeArmsTelemetry().catch(async (error: unknown) => {
+  armsTelemetryReady = false;
+  // 遥测是可选能力，失败不能阻止主窗；Error 的默认 JSON 序列化是 {}，需显式提取字段。
+  logger.warn("[arms] electron init failed; continuing without telemetry", {
+    name: error instanceof Error ? error.name : "Error",
+    message: error instanceof Error ? error.message : String(error),
+  });
+  try {
+    const { initializeCrashCapture } = await import("./desktopCrashCapture.js");
+    initializeCrashCapture(logger, false);
+  } catch {
+    logger.warn("[crash-capture] local fallback unavailable; continuing application startup");
+  }
+});

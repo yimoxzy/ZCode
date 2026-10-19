@@ -20,10 +20,17 @@ export const useOpenRewards = () => useContext(RewardsContext);
 export function RewardsProvider({
   children,
   desktop,
+  enabled = true,
 }: {
   children: ReactNode;
   desktop: boolean;
+  enabled?: boolean;
 }) {
+  if (!enabled) return <RewardsContext.Provider value={null}>{children}</RewardsContext.Provider>;
+  return <EnabledRewardsProvider desktop={desktop}>{children}</EnabledRewardsProvider>;
+}
+
+function EnabledRewardsProvider({ children, desktop }: { children: ReactNode; desktop: boolean }) {
   const [opened, setOpened] = useState(false);
   const platform = usePlatform();
   const { locale } = useZCodeIntl();

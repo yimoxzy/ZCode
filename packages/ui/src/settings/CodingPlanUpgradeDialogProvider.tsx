@@ -32,7 +32,37 @@ const CodingPlanUpgradeDialogContext = createContext<CodingPlanUpgradeDialogCont
   null,
 );
 
-export function CodingPlanUpgradeDialogProvider({ children }: { children: ReactNode }) {
+const disabledInventory: CodingPlanEntryInventory = {
+  entryPlanList: "",
+  status: "ready",
+  retry: () => {},
+};
+const disabledContext: CodingPlanUpgradeDialogContextValue = {
+  inventory: disabledInventory,
+  openCodingPlanUpgrade: () => false,
+};
+
+export function CodingPlanUpgradeDialogProvider({
+  children,
+  enabled = true,
+}: {
+  children: ReactNode;
+  enabled?: boolean;
+}) {
+  // 织流不复用上游套餐；禁用分支不能挂载会查询商品与账号权益的 hook。
+  if (!enabled) {
+    return (
+      <CodingPlanUpgradeDialogContext.Provider value={disabledContext}>
+        {children}
+      </CodingPlanUpgradeDialogContext.Provider>
+    );
+  }
+  return (
+    <EnabledCodingPlanUpgradeDialogProvider>{children}</EnabledCodingPlanUpgradeDialogProvider>
+  );
+}
+
+function EnabledCodingPlanUpgradeDialogProvider({ children }: { children: ReactNode }) {
   const platform = usePlatform();
   const inventory = useCodingPlanEntryPlanList();
   const inventoryRef = useRef(inventory);

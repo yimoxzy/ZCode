@@ -14,7 +14,12 @@ import {
 } from "@zcode/shared";
 import type { ISettingService } from "./setting.js";
 import { normalizeSettingsPatch } from "#src/setting/normalizeSettingsPatch.js";
-import { copyDataDirectory, getDataBaseDir, validateDataBaseDirTarget } from "../paths.js";
+import {
+  copyDataDirectory,
+  getDataBaseDir,
+  resolveDefaultDataBaseDir,
+  validateDataBaseDirTarget,
+} from "../paths.js";
 import { isEffectiveDevelopmentNodeEnv } from "../runtime-tools/nodeEnv.js";
 import { maybeThrowInjectedFsFault } from "../fs/fsFaultInjection.js";
 import { atomicWriteText } from "../fs/atomicFileUtils.js";
@@ -53,7 +58,8 @@ function resolveUserHomeDir() {
 }
 
 function getSettingsDir() {
-  return join(resolveUserHomeDir(), ".zcode", "v2");
+  // 设置文件是启动目录的唯一事实来源，必须与 Main 的品牌 bootstrap 路径一致。
+  return join(resolveDefaultDataBaseDir(resolveUserHomeDir()), ".zcode", "v2");
 }
 
 function getSettingsFile() {
@@ -338,7 +344,7 @@ export function createSettingServiceWithMigrations(): {
 
     async updateDataBaseDir(newDir: string | undefined): Promise<void> {
       const currentBaseDir = getDataBaseDir();
-      const targetBaseDir = newDir?.trim() || homedir();
+      const targetBaseDir = newDir?.trim() || resolveDefaultDataBaseDir(resolveUserHomeDir());
       const validation = validateDataBaseDirTarget(targetBaseDir);
       if (!validation.ok) {
         // Windows 安装目录由安装器/自动更新管理，把 .zcode/v2 放进去可能在升级时被覆盖。

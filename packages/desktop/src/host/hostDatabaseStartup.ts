@@ -3,7 +3,7 @@ import {
   markTasksStoragePrepared,
   resolveZCodeAgentSpawnCwd,
 } from "@zcode/services/storage-startup";
-import type { DatabaseStartupState } from "@zcode/shared";
+import { ZHILIU_DESKTOP_ENABLED, type DatabaseStartupState } from "@zcode/shared";
 import { DatabaseStartupCoordinator } from "./databaseStartupCoordinator.js";
 import { StartupDiskSampler } from "./startupDiskSampler.js";
 import { prepareHostStorage, prepareSessionStorage } from "./storagePreparationProcesses.js";
@@ -25,7 +25,9 @@ export function createHostDatabaseStartup(options: {
     publish: options.publish,
     prepare: async (report) => {
       const preparedPaths = new Set<string>();
-      sampler = new StartupDiskSampler({ onSample: (disk) => coordinator.updateDisk(disk) });
+      sampler = new StartupDiskSampler({
+        onSample: (disk) => coordinator.updateDisk(disk),
+      });
       const currentSampler = sampler;
       const observePath = async (path: string) => {
         let timer: ReturnType<typeof setTimeout> | undefined;
@@ -50,10 +52,19 @@ export function createHostDatabaseStartup(options: {
         await prepareHostStorage(
           tasksPath,
           (phase, migration) =>
-            report("preparing_host_storage", phase, { databaseId: "tasks-index", migration }),
+            report("preparing_host_storage", phase, {
+              databaseId: "tasks-index",
+              migration,
+            }),
           abort.signal,
         );
         markTasksStoragePrepared(tasksPath);
+        // 本地 Agent 未开放时只准备 Host 索引；CLI 存储入口也会读取运行时配置，不能借启动绕过封闭。
+        if (ZHILIU_DESKTOP_ENABLED) {
+          report("starting_services");
+          await options.initializeServices();
+          return;
+        }
         report("preparing_session_storage", "checking");
         const candidates = options.workingDirectories?.length
           ? options.workingDirectories

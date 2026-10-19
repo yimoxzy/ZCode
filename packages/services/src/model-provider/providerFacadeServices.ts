@@ -1,5 +1,5 @@
 import type { Event } from "@zcode/rpc";
-import { ServiceChannels } from "@zcode/shared";
+import { ServiceChannels, ZHILIU_DESKTOP_ENABLED } from "@zcode/shared";
 import {
   type ModelConfigObject,
   type ModelId,
@@ -19,6 +19,7 @@ import {
 import { createServiceDescriptor } from "../descriptors.js";
 import type { ModelConnectivityResult } from "@zcode/shared";
 import { createServiceLogger } from "../logger/serviceLogger.js";
+import { rejectPersonalModelOperation } from "../zhiliu/managedModelPolicy.js";
 
 export type {
   ProviderSettingsProviderView,
@@ -111,6 +112,31 @@ export function createProviderSettingsService(
   ensureReady: () => Promise<void> = async () => {},
   testConnectivity?: ProviderSettingsConnectivityTester,
 ): IProviderSettingsService {
+  if (ZHILIU_DESKTOP_ENABLED) {
+    return {
+      onDidChange: toEvent((listener) => facade.onDidChange(listener)),
+      getView: async () => {
+        await ensureReady();
+        return facade.getView();
+      },
+      refresh: async () => {
+        await ensureReady();
+        return facade.getView();
+      },
+      createPersonalProvider: rejectPersonalModelOperation,
+      resolveModelConfig: rejectPersonalModelOperation,
+      savePersonalProviderOverlay: rejectPersonalModelOperation,
+      deletePersonalProvider: rejectPersonalModelOperation,
+      reorderPersonalProviders: rejectPersonalModelOperation,
+      reorderPersonalModels: rejectPersonalModelOperation,
+      addPersonalModel: rejectPersonalModelOperation,
+      renamePersonalModel: rejectPersonalModelOperation,
+      deletePersonalModel: rejectPersonalModelOperation,
+      savePersonalModelDraft: rejectPersonalModelOperation,
+      setPersonalModelEnabled: rejectPersonalModelOperation,
+      testModelConnectivity: rejectPersonalModelOperation,
+    };
+  }
   return {
     onDidChange: toEvent((listener) => facade.onDidChange(listener)),
     getView: async () => {

@@ -42,6 +42,7 @@ import {
   TID_V4_ATTACHMENT_UPLOAD_PROGRESS,
   TID_V4_ATTACHMENT_UPLOAD_RETRY,
   TID_V4_STOP,
+  ZHILIU_DESKTOP_ENABLED,
   testId,
   type HighspeedCardSnapshot,
   type PlanIdentitySnapshot,
@@ -73,6 +74,7 @@ import {
   AttachmentPreview,
 } from "@/components/ai-elements/attachments.js";
 import { Button } from "@/components/ui/button.js";
+import { ZhiliuCloudAccessNotice } from "@/root/ZhiliuCloudAccessNotice.js";
 import {
   Dialog,
   DialogClose,
@@ -2543,4 +2545,13 @@ function ConversationComposerImpl({
   );
 }
 
-export const ConversationComposer = memo(ConversationComposerImpl);
+export const ConversationComposer = memo(function ManagedConversationComposer(
+  props: ConversationComposerProps,
+) {
+  // 不能仅禁用发送按钮：不挂载输入/附件预热等 hooks，避免启动尚未授权的本地 CLI。
+  return ZHILIU_DESKTOP_ENABLED ? (
+    <ZhiliuCloudAccessNotice />
+  ) : (
+    <ConversationComposerImpl {...props} />
+  );
+});

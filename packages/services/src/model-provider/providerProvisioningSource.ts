@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   providerProvisioningEnvelopeSchema,
+  ZHILIU_DESKTOP_ENABLED,
   type ProviderProvisioningCredentialEntry,
   type ProviderProvisioningEnvelope,
 } from "@zcode/shared";
@@ -19,6 +20,7 @@ import {
   type CredentialCipherProvider,
 } from "../credential/providers/credentialCipherProvider.js";
 import type { ISettingService } from "../setting/setting.js";
+import { rejectPersonalModelOperation } from "../zhiliu/managedModelPolicy.js";
 
 const CREDENTIAL_FILE_NAME = "credentials.json";
 export const PROVIDER_PROVISIONING_OAUTH_CREDENTIAL_KEYS = [
@@ -50,6 +52,7 @@ export interface ProviderProvisioningSourceOptions {
 export function createProviderProvisioningSource(
   options: ProviderProvisioningSourceOptions,
 ): ProviderProvisioningSource {
+  if (ZHILIU_DESKTOP_ENABLED) return { read: rejectPersonalModelOperation };
   return {
     async read(syncId: string): Promise<ProviderProvisioningEnvelope> {
       const [personal, settings, credentials, templates] = await Promise.all([

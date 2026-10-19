@@ -38,6 +38,7 @@ import {
   TID_CHAT_MODEL_SELECT_GROUP,
   TID_CHAT_MODEL_SELECT_ITEM,
   TID_CHAT_MODEL_SELECT_TRIGGER,
+  ZHILIU_DESKTOP_ENABLED,
   testId,
 } from "@zcode/shared";
 import {
@@ -184,7 +185,14 @@ interface ModelConfigSelectProps {
   triggerBadge?: ReactNode;
 }
 
-export const ModelConfigSelect = memo(function ModelConfigSelectComponent({
+export const ModelConfigSelect = memo(function ManagedModelConfigSelect(
+  props: ModelConfigSelectProps,
+) {
+  // 托管构建不挂载上游目录、连接方式菜单或管理模型动作。
+  return ZHILIU_DESKTOP_ENABLED ? null : <ModelConfigSelectComponent {...props} />;
+});
+
+const ModelConfigSelectComponent = memo(function ModelConfigSelectComponent({
   modelGroups,
   normalizedValue,
   triggerLabel,

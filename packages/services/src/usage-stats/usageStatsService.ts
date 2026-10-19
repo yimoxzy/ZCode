@@ -16,7 +16,8 @@ import type {
   UsageStatsRequest,
   UsageStatsSnapshot,
 } from "@zcode/shared";
-import { isCodingPlanModelProviderId } from "@zcode/shared";
+import { isCodingPlanModelProviderId, ZHILIU_DESKTOP_ENABLED } from "@zcode/shared";
+import { rejectOfficialCloudOperation } from "../zhiliu/officialCloudPolicy.js";
 import type { ICredentialService } from "../credential/credential.js";
 import type { IAccountRequestAuthService } from "../model-provider/accountRequestAuthService.js";
 import type { IZCodeAgentService } from "../zcode-agent/zcodeAgent.js";
@@ -57,6 +58,31 @@ function isCodingPlanProviderId(providerId: string | undefined): boolean {
 export function createUsageStatsService(
   dependencies: UsageStatsServiceDependencies,
 ): IUsageStatsService {
+  if (ZHILIU_DESKTOP_ENABLED)
+    return {
+      getAppUsageSnapshot: (request) =>
+        dependencies.zcodeAgentService.getAppUsageStats({
+          range: request.range,
+          timeZone: request.timeZone,
+        }),
+      getEntitlementSnapshot: async () => ({
+        generatedAt: Date.now(),
+        authenticated: false,
+        unavailableReason: "not_configured",
+        provider: null,
+        remaining: null,
+        subscription: null,
+        quota: null,
+        mcpQuota: null,
+      }),
+      getCodingPlanUsageSnapshot: rejectOfficialCloudOperation,
+      getCodingPlanRegularTps: rejectOfficialCloudOperation,
+      getCodingPlanResetStatus: rejectOfficialCloudOperation,
+      requestCodingPlanResetOpportunity: rejectOfficialCloudOperation,
+      useCodingPlanReset: rejectOfficialCloudOperation,
+      markCodingPlanResetHistoryRead: rejectOfficialCloudOperation,
+      getSnapshot: rejectOfficialCloudOperation,
+    };
   const quotaProvider = new BigModelUsageQuotaProvider({
     apiClient: dependencies.apiClient,
     accountRequestAuthService: dependencies.accountRequestAuthService,
@@ -67,10 +93,7 @@ export function createUsageStatsService(
       ? { officialMcpCredentialSource: dependencies.officialMcpCredentialSource }
       : {}),
   });
-  const regularTpsCache = new Map<
-    string,
-    { expiresAt: number; value: number | undefined }
-  >();
+  const regularTpsCache = new Map<string, { expiresAt: number; value: number | undefined }>();
   const regularTpsInFlight = new Map<string, Promise<number | undefined>>();
 
   function regularTpsCacheKey(request: CodingPlanRegularTpsRequest): string {

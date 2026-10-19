@@ -14,6 +14,7 @@ import {
   TID_OAUTH_ERROR,
   TID_OAUTH_LOGIN_BUTTON,
   ZAI_PROVIDER_ID,
+  ZHILIU_DESKTOP_ENABLED,
   testId,
 } from "@zcode/shared";
 import { Alert, AlertDescription } from "./components/ui/alert.js";
@@ -26,6 +27,7 @@ import { renderOAuthProviderIcon } from "./lib/oauthProviderIcon.js";
 import { ThemeHeroVisual } from "./openWorkspacePageThemeHero.js";
 import { useZCodeStore } from "./store/StoreProvider.js";
 import { DesktopOverlayWindowControls } from "@/DesktopOverlayWindowControls.js";
+import { ZhiliuCloudAccessNotice } from "@/root/ZhiliuCloudAccessNotice.js";
 
 interface WelcomeScreenProps {
   onComplete: (reason: LoginCompleteReason) => void | Promise<void>;
@@ -71,7 +73,11 @@ export function shouldCompleteLoginFromExistingUser(params: {
   return params.hasUser && !params.attempt;
 }
 
-export function LoginPanel({ active, onComplete }: LoginPanelProps) {
+export function LoginPanel(props: LoginPanelProps) {
+  return ZHILIU_DESKTOP_ENABLED ? <ZhiliuCloudAccessNotice /> : <UpstreamLoginPanel {...props} />;
+}
+
+function UpstreamLoginPanel({ active, onComplete }: LoginPanelProps) {
   const { intl } = useZCodeIntl();
   const {
     startLogin,

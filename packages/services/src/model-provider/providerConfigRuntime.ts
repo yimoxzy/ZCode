@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { ZHILIU_DESKTOP_ENABLED } from "@zcode/shared";
 import {
   NodeProviderConfigRuntime,
   PERSONAL_PROVIDER_CONFIG_FILE_NAME,
@@ -8,6 +9,10 @@ import {
 import type { ModelProviderConfig } from "./legacyModelProviderSerialized.js";
 import { getAppConfigDir } from "../paths.js";
 import { importLegacyPersonalProviderConfig } from "./legacyPersonalProviderConfigImporter.js";
+import {
+  createManagedProviderConfigRuntime,
+  type ProviderConfigRuntimeBoundary,
+} from "../zhiliu/managedProviderConfigRuntime.js";
 
 export interface ProviderConfigRuntimeOptions {
   readonly zcodeBuiltinFilePath: string;
@@ -29,9 +34,14 @@ export interface ProviderConfigRuntimeOptions {
  */
 export class ProviderConfigRuntime {
   readonly configService: NodeProviderConfigRuntime["configService"];
-  readonly #runtime: NodeProviderConfigRuntime;
+  readonly #runtime: ProviderConfigRuntimeBoundary;
 
   constructor(options: ProviderConfigRuntimeOptions) {
+    if (ZHILIU_DESKTOP_ENABLED) {
+      this.#runtime = createManagedProviderConfigRuntime();
+      this.configService = this.#runtime.configService;
+      return;
+    }
     const runtimeOptions: NodeProviderConfigRuntimeOptions = {
       zcodeBuiltinFilePath: options.zcodeBuiltinFilePath,
       zcodeBuiltinActiveFilePath: options.zcodeBuiltinActiveFilePath,

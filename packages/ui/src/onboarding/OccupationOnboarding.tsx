@@ -18,7 +18,7 @@ import { useZCodeStore } from "@/store/StoreProvider.js";
 import type { InterfaceMode } from "@/lib/interfaceMode.js";
 import { logger } from "@/logger.js";
 import { DesktopWindowControls } from "@/DesktopWindowControls.js";
-import type { OnboardingRecordEntry } from "@zcode/shared";
+import { ZHILIU_DESKTOP_ENABLED, type OnboardingRecordEntry } from "@zcode/shared";
 
 /** 追加本地引导记录（userId 由 host 补全）；channel 缺失挂起时 5 秒超时按写失败处理。 */
 async function appendOnboardingRecord(
@@ -32,7 +32,12 @@ async function appendOnboardingRecord(
   ]);
 }
 
-export function OccupationOnboarding({
+export function OccupationOnboarding(props: Parameters<typeof OccupationOnboardingImpl>[0]) {
+  // 织流直接进入项目壳；上游引导不承担平台身份或模型授权。
+  return ZHILIU_DESKTOP_ENABLED ? props.children : <OccupationOnboardingImpl {...props} />;
+}
+
+function OccupationOnboardingImpl({
   children,
   showWindowControls = false,
   showChildrenWhileLoading = false,

@@ -52,13 +52,23 @@ const Context = createContext<MarketingTouchController | null>(null);
 // 导出给左下角活动仲裁层（SidebarBottomActivity）读取 Banner 可见性；控制器仍是唯一 owner。
 export { Context as MarketingTouchContext };
 
+interface MarketingTouchProviderProps {
+  children: ReactNode;
+  desktop: boolean;
+  enabled?: boolean;
+}
 export function MarketingTouchProvider({
   children,
   desktop,
-}: {
-  children: ReactNode;
-  desktop: boolean;
-}) {
+  enabled = true,
+}: MarketingTouchProviderProps) {
+  if (!enabled) return <Context.Provider value={null}>{children}</Context.Provider>;
+  return (
+    <EnabledMarketingTouchProvider desktop={desktop}>{children}</EnabledMarketingTouchProvider>
+  );
+}
+
+function EnabledMarketingTouchProvider({ children, desktop }: MarketingTouchProviderProps) {
   const services = useServices();
   const platform = usePlatform();
   const openSettingsTab = useTabStore((state) => state.openSettingsTab);

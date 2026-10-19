@@ -196,6 +196,8 @@ function createSharedDefines() {
     __ZCODE_BUILD_TIME__: JSON.stringify(buildMetadata.buildTime),
     __ZCODE_ENV__: JSON.stringify(zcodeEnv),
     __ZCODE_PRODUCT_FLAVOR__: JSON.stringify(zcodeProductFlavor),
+    __ZHILIU_DESKTOP_ENABLED__: JSON.stringify(process.env.ZHILIU_DESKTOP === "1"),
+    __ZHILIU_CLOUD_URL__: JSON.stringify(process.env.ZHILIU_CLOUD_URL?.trim() ?? ""),
     ...buildTimeConfigDefines,
     // Computer Use Helper build identity — helperInstaller 读它决定下载哪个 Helper bundle。
     // 缺失时 installer 抛 "Packaged ZCode is missing its embedded Computer Use Helper build identity"。
