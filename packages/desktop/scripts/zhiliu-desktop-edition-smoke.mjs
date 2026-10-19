@@ -33,8 +33,8 @@ delete env.ZCODE_DATA_BASE_DIR;
 let app;
 try {
   app = await _electron.launch({
-    executablePath: process.env.ZHILIU_SMOKE_EXECUTABLE || require("electron"),
-    args: process.env.ZHILIU_SMOKE_EXECUTABLE ? [] : [desktopRoot],
+    executablePath: require("electron"),
+    args: [desktopRoot],
     cwd: desktopRoot,
     env,
     timeout: 60_000,

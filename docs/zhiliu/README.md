@@ -56,8 +56,18 @@ node packages/desktop/scripts/zhiliu-desktop-edition-smoke.mjs
 ```
 
 整包 smoke 使用临时 profile/home 和本地 fixture，真正启动 Main/Host/Renderer，验证首次云入口、窗口命令、无本机桥、草稿保留、关闭云窗后本地窗口存活；不会证明 bundled CLI、本地推理或工具可用，不把 fixture 当真实云端对话验证。
-可设置 `ZHILIU_SMOKE_EXECUTABLE` 指向安装后的织流.exe，复用同一验收；设置 `ZHILIU_SMOKE_SCREENSHOT` 保存截图。
+Windows 发布包关闭 Main Inspector，不能使用 Playwright Electron launch 验收安装包。安装后的实际程序使用页面 CDP 测试，保留发布 fuse：
+
+```powershell
+$env:ZHILIU_SMOKE_EXECUTABLE = 'C:\path\to\织流.exe'
+# 不设置 ZHILIU_CLOUD_URL 时使用本机 fixture；设置可信服务 URL 时只检查真实登录页和 readiness。
+node packages/desktop/scripts/zhiliu-installed-smoke.mjs
+```
+
+该测试只为自己启动的进程创建临时 profile、loopback 调试端口，结束后关闭该进程树；不修改安装包、不接管用户窗口。设置 `ZHILIU_SMOKE_SCREENSHOT` 可保存截图。真实服务验收不自动登录、不创建账号、不发起付费请求。
 
 仓库标准 `pnpm typecheck` 通过。额外尝试 desktop 全部 tsconfig 时发现原有 main/renderer 的 rootDir、Window bridge 声明等错误；该补充检查不宣称通过，详见本机验收记录。
+
+安装产物与验收：[2026-10-19 平台授权桌面技术版](releases/2026-10-19-managed-preview.md)。
 
 关联设计：[产品边界](../../specs/zhiliu-desktop-edition.md)、[官方服务隔离](official-cloud-isolation.md)。
