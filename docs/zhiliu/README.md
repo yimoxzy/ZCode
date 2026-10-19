@@ -44,7 +44,7 @@ pnpm build:zhiliu-desktop -- --os win --arch x64
 仅本机开发可使用 loopback HTTP，通过安全隧道连接服务器。不要将运维私钥、密码、上游 Key 打入客户端。
 本机测试安装包使用 `http://127.0.0.1:18780`，需要独立安全隧道；分发给客户前必须用正式 HTTPS 服务地址重建。
 `ZHILIU_CLOUD_URL` 可由可信本机启动环境覆盖；不接受云网页提供任意服务地址。
-当前3.15.3版本成功打包后的预期产物为 `packages/desktop/dist/织流-3.15.3-win-x64.exe`；独立 appId 用于与 ZCode 并存。构建、安装及部署是否已验收，以[账号授权发布记录](releases/2026-10-19-account-authorization.md)为准。
+当前3.15.3版本已生成 `packages/desktop/dist/织流-3.15.3-win-x64.exe` 并安装到开发电脑；独立 appId 用于与 ZCode 并存。构建、安装及部署的验证范围见[账号授权发布记录](releases/2026-10-19-account-authorization.md)。
 
 ## 验证入口
 
