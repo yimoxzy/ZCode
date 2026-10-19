@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { InternalChannels, PlatformChannels, type RemoteTarget } from "@zcode/shared";
 import { isAllowedExternalOpenUrl } from "../src/main/desktopMainIpcRemote.js";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 type IpcHandler = (...args: unknown[]) => unknown;
 type RemoteIpcOptions = Parameters<
@@ -169,17 +172,19 @@ describe("remote workspace connect telemetry IPC", () => {
     registerRemoteIpcHandlers(options);
     const listener = h.listeners.get(PlatformChannels.OpenExternal);
     expect(listener).toBeDefined();
+    // file:///tmp/... 在 Windows 缺少盘符；由宿主绝对路径构造有效 file URL，并检查精确解码。
+    const filePath = join(tmpdir(), "zcode-open-external-fixtures", "secret");
 
     listener?.({}, "https://example.com/docs");
     listener?.({}, "http://localhost:3000/index.html");
-    listener?.({}, "file:///tmp/secret");
+    listener?.({}, pathToFileURL(filePath).href);
     listener?.({}, "javascript:alert(1)");
     listener?.({}, "not a url");
 
     expect(h.shellOpenExternal).toHaveBeenCalledTimes(2);
     expect(h.shellOpenExternal).toHaveBeenCalledWith("https://example.com/docs");
     expect(h.shellOpenExternal).toHaveBeenCalledWith("http://localhost:3000/index.html");
-    await vi.waitFor(() => expect(h.shellOpenPath).toHaveBeenCalledWith("/tmp/secret"));
+    await vi.waitFor(() => expect(h.shellOpenPath).toHaveBeenCalledWith(filePath));
     expect(options.logger.warn).toHaveBeenCalledTimes(2);
   });
 

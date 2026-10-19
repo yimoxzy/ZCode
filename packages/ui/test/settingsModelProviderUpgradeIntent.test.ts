@@ -76,7 +76,11 @@ describe("settings model provider upgrade intent", () => {
 
     expect(appSource).not.toContain("handleOpenCodingPlanUpgrade");
     expect(appSource).not.toContain("<CodingPlanUpgradeDialog");
-    expect(rootSource).toContain("<CodingPlanUpgradeDialogProvider>");
+    // 织流复用上下文契约，但禁止挂载上游购买流程；属性换行不能改变此边界。
+    expect(rootSource).toMatch(
+      /<CodingPlanUpgradeDialogProvider\s+enabled=\{\s*!ZHILIU_DESKTOP_ENABLED\s*\}\s*>/,
+    );
+    expect(rootSource).toContain("</CodingPlanUpgradeDialogProvider>");
     expect(workspaceSidebarSource).toContain("useCodingPlanUpgradeDialog");
     expect(v4ComposerToolbarSource).toContain("useCodingPlanUpgradeDialog");
     expect(v4ComposerToolbarSource).toContain("openCodingPlanUpgrade({");

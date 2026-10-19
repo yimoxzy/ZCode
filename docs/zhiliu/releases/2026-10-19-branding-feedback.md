@@ -32,6 +32,8 @@
 | 实际安装真实 SaaS | 9项通过，含真实登录页、反馈需登录、API/Worker ready；schema `024_general_feedback` |
 | 原生品牌 | 安装/卸载/应用/托盘图标提取并实查，资源摘要与品牌源一致；快捷方式指向已安装织流程序 |
 
+补充仓库级发布回归：1092文件中1089通过，12201用例中12172通过、25跳过、4失败。失败分布为3条文件URL用例和1条上游套餐Provider源码断言：前者把无盘符POSIX路径用于Windows，并错误地把合法Windows UNC当作非法URL；后者仍要求没有属性的旧Provider标签。仅修正测试fixture和显式品牌边界断言，保留精确路径、锚点剥离、非法URL拒绝、UNC平台语义及官方套餐禁用验证。修正后原生两文件19项、UI与既有隔离专项两文件11项通过，标准typecheck/Lint/架构检查通过；没有修改业务代码或重新替换已验收安装包。不把首轮完整回归写成全通过。
+
 真实服务检查未注册用户、未登录用户账号、未调用模型或消耗积分。安装 smoke 使用自己的临时 profile 和 loopback CDP，保留发布包关闭 Main Inspector 的设置，结束仅清理自身进程。
 
 本机日志在 `F:/agent/zhiliu-toolchain/`：`zhiliu-brand-final-package.log`、`feedback-final-typecheck.log`、`feedback-final-lint.log`、`feedback-final-architecture.log`、`feedback-final-unit.log`、`feedback-final-menu-tests.log`、`feedback-installed-fixture.log`、`feedback-installed-live.log`。原生图标证据为 `zhiliu-native-brand-evidence.json` 和 `zhiliu-native-brand-sheet.png`。
