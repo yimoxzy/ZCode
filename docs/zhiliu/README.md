@@ -70,5 +70,6 @@ node packages/desktop/scripts/zhiliu-installed-smoke.mjs
 仓库标准 `pnpm typecheck` 通过。额外尝试 desktop 全部 tsconfig 时发现原有 main/renderer 的 rootDir、Window bridge 声明等错误；该补充检查不宣称通过，详见本机验收记录。
 
 初版安装产物与验收：[2026-10-19 平台授权桌面技术版](releases/2026-10-19-managed-preview.md)。后续品牌、反馈与更新验收以对应批次发布记录为准。
+本批产物：[2026-10-19 品牌、反馈与更新接入](releases/2026-10-19-branding-feedback.md)。
 
 关联设计：[产品边界](../../specs/zhiliu-desktop-edition.md)、[官方服务隔离](official-cloud-isolation.md)。

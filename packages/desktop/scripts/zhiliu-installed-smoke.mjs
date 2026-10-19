@@ -114,6 +114,11 @@ try {
     assert.equal(readiness.status, "ready");
     assert.equal(readiness.worker, "ready");
     checks.push("real SaaS login form", "API and worker ready");
+    await local.getByTestId("zhiliu-open-feedback").click();
+    await cloud.waitForURL((url) => url.hash.startsWith("#/feedback?"));
+    assert.match(cloud.url(), /source=desktop&app_version=/u);
+    await cloud.locator('input[type="password"]').waitFor();
+    checks.push("real feedback route requires platform sign-in");
   } else {
     await cloud.getByRole("heading", { name: "织流安装验收" }).waitFor();
     await cloud.getByRole("textbox", { name: "draft" }).fill("saved draft");
