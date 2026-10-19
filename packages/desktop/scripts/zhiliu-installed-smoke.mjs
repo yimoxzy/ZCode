@@ -66,6 +66,8 @@ try {
   await local.getByTestId("zhiliu-workspace-switcher").waitFor({ timeout: 60_000 });
   await local.getByTestId("root-startup-loading").waitFor({ state: "hidden", timeout: 60_000 });
   await local.getByTestId("zhiliu-cloud-access-notice").first().waitFor();
+  await local.getByTestId("zhiliu-connect-computer").waitFor({ state: "visible" });
+  assert.equal(await local.getByTestId("zhiliu-connect-computer").isEnabled(), true);
   assert.equal(await local.locator('input[type="password"]').count(), 0);
   assert.equal(await local.title(), "织流");
   const brandMarks = local.getByRole("img", { name: "织流", exact: true });
@@ -89,6 +91,7 @@ try {
   const checks = [
     "installed startup without Main Inspector",
     "platform login entry",
+    "visible computer connection entry",
     "no personal model/key form",
     "Zhiliu title and loaded platform brand marks",
   ];

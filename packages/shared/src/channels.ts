@@ -598,6 +598,8 @@ export const HostMessageTypes = {
   DisposeRemoteWorkspaceSession: "dispose-remote-workspace-session",
   /** main → host：复用现有服务，对新的 RPC MessagePort 暴露服务 */
   AttachServicePort: "attach-service-port",
+  /** 织流 Main 独占的文件工具连接，不向 Renderer 暴露。 */
+  AttachZhiliuToolsPort: "attach-zhiliu-tools-port",
   /** main → host：精确释放一个 RPC MessagePort attachment */
   DetachServicePort: "detach-service-port",
   /** 窗口关闭，清理资源 */

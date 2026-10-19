@@ -136,6 +136,7 @@ import { reconnectWebRemoteControlWorkspaceInRenderer } from "./webRemoteControl
 import { sendWebRemoteControlStatusChangedToWindow } from "./webRemoteControlStatusEvents.js";
 import { executeDesktopCommand } from "./desktopCommandHandlers.js";
 import { openZhiliuCloudWindow, isZhiliuCloudWindow } from "./zhiliuCloudWindow.js";
+import { createZhiliuComputerConnection } from "./zhiliuComputerConnection.js";
 import { resolveBootstrapSettingsFile } from "./desktopDataBaseDirBootstrap.js";
 import { clampDesktopZoomLevel, resolveDesktopZoomLevelFromFactor } from "./desktopZoom.js";
 import {
@@ -665,6 +666,11 @@ const windowWorkspaceMap = new Map<number, Set<string>>();
 const windowTaskRealtimeHostIdMap = new Map<number, string>();
 const windowUnreadCountMap = new Map<number, number>();
 const windowHostProcessMap = new Map<number, ElectronUtilityProcess>();
+const zhiliuComputerConnection = ZHILIU_DESKTOP_ENABLED ? createZhiliuComputerConnection({
+  cloudUrl: () => process.env.ZHILIU_CLOUD_URL?.trim() || ZHILIU_CLOUD_URL,
+  resolveHost: () => windowHostProcessMap.values().next().value ?? null,
+  iconPath,
+}) : undefined;
 const cuaPipFocusRouter = createCuaPipFocusRouter({
   send: (windowId, event) => {
     windowHostProcessMap.get(windowId)?.postMessage({
@@ -1507,6 +1513,11 @@ async function executeDesktopCommandForApp(
   command: Parameters<typeof executeDesktopCommand>[0]["command"],
   senderWindow?: BrowserWindow | null,
 ) {
+  if (command === DesktopCommandIds.ConnectZhiliuComputer) {
+    if (!zhiliuComputerConnection) throw new Error("Zhiliu is not enabled in this build");
+    await zhiliuComputerConnection.connect();
+    return;
+  }
   if (
     command === DesktopCommandIds.OpenZhiliuCloud ||
     (ZHILIU_DESKTOP_ENABLED && command === DesktopCommandIds.OpenFeedback)
@@ -1648,6 +1659,7 @@ function rebuildMenu() {
   void Promise.all([resolveZCodeEndpointSelection(), mainSettingService.get()]).then(
     ([zcodeEndpointSelection, settings]) => {
       rebuildApplicationMenu({
+        zhiliuComputerActions: zhiliuComputerConnection,
         currentApplicationLocale,
         zcodeEndpointSelection,
         executeDesktopCommand: executeDesktopCommandForApp,
@@ -2361,6 +2373,8 @@ app.whenReady().then(async () => {
     () => showCurrentWindowFromDock(primaryWindowCoordinator),
   );
   const desktopTrayOptions = {
+    connectZhiliuComputer: zhiliuComputerConnection?.connect,
+    pauseZhiliuComputer: zhiliuComputerConnection?.pause,
     getLocale: () => currentApplicationLocale,
     showCurrentWindow: () =>
       primaryWindowCoordinator.ensurePrimaryWindow("tray-show-current-window"),

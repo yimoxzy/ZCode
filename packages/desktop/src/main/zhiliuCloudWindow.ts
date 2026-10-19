@@ -10,7 +10,8 @@ import {
 export interface OpenZhiliuCloudWindowOptions {
   cloudUrl: string | undefined;
   iconPath?: string;
-  entry?: "feedback";
+  entry?: "feedback" | "devices";
+  authorizationId?: string;
   appVersion?: string;
   parent?: BrowserWindow | null;
   logger?: { warn: (...args: unknown[]) => void };
@@ -45,6 +46,12 @@ export async function openZhiliuCloudWindow(
   options: OpenZhiliuCloudWindowOptions,
 ): Promise<BrowserWindow> {
   const target = resolveZhiliuCloudTarget(options.cloudUrl);
+  if (options.entry === "devices") {
+    if (!options.authorizationId || !/^[a-f0-9-]{36}$/iu.test(options.authorizationId)) throw new Error("Invalid device authorization");
+    const deviceUrl = new URL(target.url);
+    deviceUrl.hash = `/settings/devices?connect=${options.authorizationId}`;
+    target.url = deviceUrl.href;
+  }
   if (options.entry === "feedback") {
     const feedbackUrl = new URL(target.url);
     const query = new URLSearchParams({ source: "desktop" });
@@ -57,7 +64,7 @@ export async function openZhiliuCloudWindow(
   if (cloudWindow && !cloudWindow.isDestroyed()) {
     if (cloudOrigin === target.origin) {
       // 只有明确反馈动作才改 hash；普通云入口仍只聚焦，避免重载登录与草稿。
-      if (options.entry === "feedback") {
+      if (options.entry === "feedback" || options.entry === "devices") {
         try {
           await cloudWindow.loadURL(target.url);
         } catch {

@@ -1,5 +1,6 @@
 export { cloudContentPayloadSchema, contentBundleSchema } from "./cloudContent.js";
 export * from "./networkCapture.js";
+export * from "./zhiliuHost.js";
 export type {
   CloudContentPayload,
   CloudContentBundle,

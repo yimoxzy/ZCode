@@ -23,6 +23,12 @@ import {
 
 export const HELP_ZCODE_ENDPOINT_PRODUCTION_MENU_ID = "help.zcode-endpoint.production";
 export const HELP_ZCODE_ENDPOINT_TEST_MENU_ID = "help.zcode-endpoint.test";
+interface ZhiliuComputerActions {
+  connect: () => Promise<void>;
+  pause: () => void;
+  disconnect: () => Promise<void>;
+  status: () => Promise<unknown>;
+}
 
 export function getDesktopMenuLabel(
   locale: Locale,
@@ -82,6 +88,7 @@ function resolveMenuAccelerator(
 }
 
 function buildApplicationMenuTemplate(options: {
+  zhiliuComputerActions?: ZhiliuComputerActions;
   currentApplicationLocale: Locale;
   zcodeEndpointSelection?: "production" | "test" | "custom";
   executeDesktopCommand: (
@@ -109,6 +116,26 @@ function buildApplicationMenuTemplate(options: {
   const zoomInVisibleAccelerator = zoomInBinding?.replace("=", "Plus");
 
   return [
+    ...(options.zhiliuComputerActions
+      ? [
+          {
+            label: "电脑连接",
+            submenu: [
+              {
+                label: "连接织流账号与授权目录…",
+                click: () => void options.zhiliuComputerActions?.connect(),
+              },
+              { label: "查看连接状态", click: () => void options.zhiliuComputerActions?.status() },
+              { label: "暂停本机执行", click: () => options.zhiliuComputerActions?.pause() },
+              { type: "separator" as const },
+              {
+                label: "断开本机账号授权",
+                click: () => void options.zhiliuComputerActions?.disconnect(),
+              },
+            ],
+          },
+        ]
+      : []),
     ...(process.platform === "darwin"
       ? [
           {
@@ -361,6 +388,7 @@ function buildApplicationMenuTemplate(options: {
 }
 
 export function rebuildApplicationMenu(options: {
+  zhiliuComputerActions?: ZhiliuComputerActions;
   currentApplicationLocale: Locale;
   zcodeEndpointSelection?: "production" | "test" | "custom";
   executeDesktopCommand: (
@@ -375,6 +403,7 @@ export function rebuildApplicationMenu(options: {
   Menu.setApplicationMenu(
     Menu.buildFromTemplate(
       buildApplicationMenuTemplate({
+        zhiliuComputerActions: options.zhiliuComputerActions,
         currentApplicationLocale: options.currentApplicationLocale,
         zcodeEndpointSelection: options.zcodeEndpointSelection,
         executeDesktopCommand: options.executeDesktopCommand,

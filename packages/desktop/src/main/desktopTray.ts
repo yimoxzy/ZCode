@@ -34,6 +34,8 @@ export function createDesktopTray(options: {
   executeDesktopCommand: (command: DesktopCommandId) => Promise<unknown>;
   quitApp: () => void;
   logger: { warn: (...args: unknown[]) => void };
+  connectZhiliuComputer?: () => Promise<void>;
+  pauseZhiliuComputer?: () => void;
 }) {
   const platform = options.platform ?? process.platform;
   // Linux 驻留能力由 createCloseToTrayCapabilityMonitor 探测决定（spec：
@@ -71,6 +73,16 @@ export function createDesktopTray(options: {
     desktopTray?.setToolTip(getLabel(desktopMenuMessageIds.trayTooltip));
     desktopTray?.setContextMenu(
       Menu.buildFromTemplate([
+        ...(options.connectZhiliuComputer
+          ? [
+              {
+                label: "连接织流账号与授权目录…",
+                click: () => void options.connectZhiliuComputer?.(),
+              },
+              { label: "暂停本机执行", click: () => options.pauseZhiliuComputer?.() },
+              { type: "separator" as const },
+            ]
+          : []),
         {
           label: getLabel(desktopMenuMessageIds.trayOpenZCode),
           click: showTrayWindow,

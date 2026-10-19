@@ -14,6 +14,9 @@
  * 3. 后续远端 connect / scoped attachment 都由同一 Host 处理
  */
 import { createHostDatabaseStartup } from "./hostDatabaseStartup.js";
+import { attachZhiliuToolPort } from "./zhiliuToolPort.js";
+import { createZhiliuToolsAttachmentOwner } from "./zhiliuToolsAttachmentOwner.js";
+import { ZHILIU_DESKTOP_ENABLED } from "@zcode/shared";
 import { createHostNetworkCapture } from "./hostNetworkCapture.js";
 import { randomUUID } from "node:crypto";
 import { createPluginSandboxRegistrationBridge } from "./pluginSandbox/index.js";
@@ -1618,6 +1621,7 @@ const hostResourceUsageResponder = createHostResourceUsageResponder({
 let activeSessionRealtimePort: ReturnType<typeof createTaskRealtimeBridgeForHostInit> = null;
 let hasDisposedHostResources = false;
 let disposeHostResourcesInFlight: Promise<HostShutdownResult> | null = null;
+const zhiliuToolsAttachments = createZhiliuToolsAttachmentOwner(attachZhiliuToolPort);
 
 function requireActiveHostApiNetworkTransport(): HostApiNetworkTransport {
   if (!activeHostApiNetworkTransport) {
@@ -2237,6 +2241,7 @@ async function disposeHostResources(reason: string): Promise<HostShutdownResult>
 
   disposeHostResourcesInFlight = (async () => {
     logger.info(`disposing host resources, reason=${reason}`);
+    const toolsDisposal = zhiliuToolsAttachments.dispose();
 
     pluginSandboxRegistrationBridge.dispose();
     stopHostNetworkTelemetry();
@@ -2265,6 +2270,11 @@ async function disposeHostResources(reason: string): Promise<HostShutdownResult>
     // Registry 是全部远端 connection 的唯一 owner；释放失败不能阻塞本地服务继续收口。
     const shutdownResult = await runHostShutdownPhases(
       [
+        {
+          name: "zhiliu-tools-dispose",
+          run: () => toolsDisposal,
+          timeoutMs: 3_500,
+        },
         {
           name: "remote-registry-dispose",
           run: () => windowRemoteConnectionRegistry.dispose(),
@@ -2310,6 +2320,7 @@ function disposeHostResourcesBestEffort(reason: string): void {
   hasDisposedHostResources = true;
 
   logger.info(`disposing host resources, reason=${reason}`);
+  void zhiliuToolsAttachments.dispose().catch(() => {});
   pluginSandboxRegistrationBridge.dispose();
   stopHostNetworkTelemetry();
   hostNetworkCapture.setCaptureId(null);
@@ -2401,6 +2412,16 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
   }
 
   const msg = result.data;
+  if (msg.type === HostMessageTypes.AttachZhiliuToolsPort) {
+    if (!ZHILIU_DESKTOP_ENABLED || hasDisposedHostResources || e.ports.length !== 1) {
+      for (const candidate of e.ports) candidate.close();
+      return;
+    }
+    await zhiliuToolsAttachments.replace(e.ports[0]!).catch(() => {
+      logger.warn("computer tools attachment failed and was closed");
+    });
+    return;
+  }
   if (msg.type === HostMessageTypes.NetworkCapture) {
     hostNetworkCapture.setCaptureId(msg.control.captureId);
     return;
