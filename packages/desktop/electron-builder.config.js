@@ -10,6 +10,10 @@ import { loadBuiltinProviderConfig } from "../../scripts/builtin-provider-config
 import { noticesFileName, stageElectronNotices } from "../../scripts/third-party-notices.mjs";
 import { resolveNativeSearchReleasePlan } from "../../scripts/native-search-tools-config.mjs";
 import { getBuildMetadata } from "./scripts/build-metadata.mjs";
+import {
+  buildZhiliuUpdatePublishConfiguration,
+  resolveZhiliuUpdateBuildPolicy,
+} from "./src/main/zhiliuUpdatePolicy.ts";
 import { collectRuntimeModuleClosureEntries } from "./scripts/runtime-dependency-closure.mjs";
 import {
   resolvePackagedNodePtyPrebuildPath,
@@ -56,6 +60,10 @@ const desktopProductIdentity = resolveDesktopProductIdentity({
 });
 // 织流资产保留独立目录；运行时资源仍映射到既有文件名，不覆盖上游构建素材。
 const isZhiliuDesktop = process.env.ZHILIU_DESKTOP === "1";
+const zhiliuUpdatePolicy = resolveZhiliuUpdateBuildPolicy(
+  isZhiliuDesktop ? process.env : {},
+  targetPlatform.os,
+);
 const appIconBuildDir = isZhiliuDesktop ? "build/zhiliu" : "build";
 const nativeSearchReleasePlan = resolveNativeSearchReleasePlan({
   platform: targetPlatform.os,
@@ -219,6 +227,14 @@ function assertPackagedCuaHelper(context) {
 }
 const shouldEnableWindowsVsign =
   process.platform === "win32" && process.env.ZCODE_ENABLE_WINDOWS_SIGN === "1";
+if (isZhiliuDesktop && zhiliuUpdatePolicy.installEnabled) {
+  if (targetPlatform.os === "win32" && !shouldEnableWindowsVsign) {
+    throw new Error("织流 Windows 更新安装必须通过 ZCODE_ENABLE_WINDOWS_SIGN=1 生成签名包");
+  }
+  if (targetPlatform.os === "darwin" && !shouldEnableMacSigning) {
+    throw new Error("织流 macOS 更新安装必须启用自己的 Developer ID 签名");
+  }
+}
 const commandStdoutMaxBuffer = 64 * 1024 * 1024;
 // 产物后缀只标记后端环境（_TEST）；身份靠 productName 区分，生产后端的 Preview 包没有后缀。
 const desktopArtifactEnvSuffix = resolveDesktopArtifactSuffix(process.env);
@@ -571,6 +587,8 @@ export default {
     zcodeProductFlavor: desktopProductIdentity.flavor,
     ...(isZhiliuDesktop
       ? {
+          // updater 缓存由 package.name 派生；只改发布元数据，避免与同机原 ZCode 共用缓存。
+          name: "zhiliu-desktop",
           productName: desktopProductIdentity.productName,
           description: "织流 AI Agent 工作台",
           homepage: "https://github.com/yimoxzy/ZCode",
@@ -951,14 +969,16 @@ export default {
     installerHeaderIcon: `${appIconBuildDir}/icon_installer.ico`,
   },
   detectUpdateChannel: false,
-  publish: {
-    provider: "generic",
-    // 当前 OSS/CDN 对多 Range 请求返回 206，但 Content-Type 仍是 application/x-msdownload，
-    // electron-updater 会因缺少 multipart/byteranges 直接回退整包下载。关闭 multiple range 后仍走差分，
-    // 只是按单 Range 顺序拉取差异块，避免 Windows 用户更新时从约 15MB 退化成 300MB+ 全量包。
-    useMultipleRangeRequest: false,
-    // 新客户端运行时使用服务端 manifest provider；这里仅保留 electron-builder 必需的
-    // generic publish 占位，避免打包产物继续携带可配置的旧 stable feed。
-    url: "http://localhost:8081",
-  },
+  publish: isZhiliuDesktop
+    ? buildZhiliuUpdatePublishConfiguration(zhiliuUpdatePolicy)
+    : {
+        provider: "generic",
+        // 当前 OSS/CDN 对多 Range 请求返回 206，但 Content-Type 仍是 application/x-msdownload，
+        // electron-updater 会因缺少 multipart/byteranges 直接回退整包下载。关闭 multiple range 后仍走差分，
+        // 只是按单 Range 顺序拉取差异块，避免 Windows 用户更新时从约 15MB 退化成 300MB+ 全量包。
+        useMultipleRangeRequest: false,
+        // 新客户端运行时使用服务端 manifest provider；这里仅保留 electron-builder 必需的
+        // generic publish 占位，避免打包产物继续携带可配置的旧 stable feed。
+        url: "http://localhost:8081",
+      },
 };

@@ -10,6 +10,8 @@ import {
 export interface OpenZhiliuCloudWindowOptions {
   cloudUrl: string | undefined;
   iconPath?: string;
+  entry?: "feedback";
+  appVersion?: string;
   parent?: BrowserWindow | null;
   logger?: { warn: (...args: unknown[]) => void };
 }
@@ -43,8 +45,25 @@ export async function openZhiliuCloudWindow(
   options: OpenZhiliuCloudWindowOptions,
 ): Promise<BrowserWindow> {
   const target = resolveZhiliuCloudTarget(options.cloudUrl);
+  if (options.entry === "feedback") {
+    const feedbackUrl = new URL(target.url);
+    const query = new URLSearchParams({ source: "desktop" });
+    if (options.appVersion && /^[\w.+-]{1,64}$/u.test(options.appVersion)) {
+      query.set("app_version", options.appVersion);
+    }
+    feedbackUrl.hash = `/feedback?${query}`;
+    target.url = feedbackUrl.href;
+  }
   if (cloudWindow && !cloudWindow.isDestroyed()) {
     if (cloudOrigin === target.origin) {
+      // 只有明确反馈动作才改 hash；普通云入口仍只聚焦，避免重载登录与草稿。
+      if (options.entry === "feedback") {
+        try {
+          await cloudWindow.loadURL(target.url);
+        } catch {
+          throw new Error("无法打开织流问题反馈，请检查网络后重试。");
+        }
+      }
       if (cloudWindow.isMinimized()) cloudWindow.restore();
       cloudWindow.show();
       cloudWindow.focus();

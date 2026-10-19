@@ -13,6 +13,9 @@ declare const __ZCODE_TELEMETRY_REPORT_ENDPOINT__: string;
 declare const __ZCODE_AUTO_UPDATE_ENABLED__: boolean;
 declare const __ZHILIU_DESKTOP_ENABLED__: boolean;
 declare const __ZHILIU_CLOUD_URL__: string;
+declare const __ZHILIU_UPDATE_MANIFEST_URL__: string;
+declare const __ZHILIU_UPDATE_INSTALL_ENABLED__: boolean;
+declare const __ZHILIU_UPDATE_PUBLISHER_NAME__: string;
 
 /** 织流 fork 身份；普通上游构建和未注入 define 的测试保持原行为。 */
 export const ZHILIU_DESKTOP_ENABLED: boolean =
@@ -20,6 +23,15 @@ export const ZHILIU_DESKTOP_ENABLED: boolean =
 /** 仅作为织流云工作台入口默认值，不替换模型、OAuth 或远控服务端点。 */
 export const ZHILIU_CLOUD_URL: string =
   typeof __ZHILIU_CLOUD_URL__ !== "undefined" ? __ZHILIU_CLOUD_URL__ : "";
+/** 仅构建方提供的织流更新配置；不读取运行时 feed 或用户模型/Endpoint 设置。 */
+export const ZHILIU_UPDATE_MANIFEST_URL: string =
+  typeof __ZHILIU_UPDATE_MANIFEST_URL__ !== "undefined" ? __ZHILIU_UPDATE_MANIFEST_URL__ : "";
+export const ZHILIU_UPDATE_INSTALL_ENABLED: boolean =
+  typeof __ZHILIU_UPDATE_INSTALL_ENABLED__ !== "undefined"
+    ? __ZHILIU_UPDATE_INSTALL_ENABLED__
+    : false;
+export const ZHILIU_UPDATE_PUBLISHER_NAME: string =
+  typeof __ZHILIU_UPDATE_PUBLISHER_NAME__ !== "undefined" ? __ZHILIU_UPDATE_PUBLISHER_NAME__ : "";
 
 export function normalizeZCodeEnv(value: string | undefined): ZCodeEnv {
   return value?.trim().toLowerCase() === "production" ? "production" : "test";

@@ -34,7 +34,7 @@ Host/service 增加同一编译身份下的能力边界：OAuth 不读取/恢复
 
 ### 帮助和反馈旁路补齐
 
-织流帮助菜单隐藏上游文档、社区、问题上报、建议、漏洞提交与更新，保留本地资源管理、日志导出和关于。需要问题反馈时用户进入云工作台使用现有 SaaS 能力；此批不新建另一反馈系统，也不将云窗口入口标为已接入的反馈表单。
+织流帮助菜单隐藏上游文档、社区、问题上报、建议、漏洞提交与更新，保留本地资源管理、日志导出和关于。织流自己的「问题反馈」通过 Main 固定同源深链进入 SaaS 普通反馈页，详见 `../../specs/zhiliu-feedback-entry.md`。自己的检查更新入口遵循 `auto-updates.md`，不查询上游来源。
 
 上游 FeedbackCenter 不在织流构建挂载，包括其工单查询、自动上传和后台指示器。Main 的 `CanOpenCommunity` 在解析远端配置前返回 false，避免工作区启动和 Quick Pick 的可用性查询绕过命令门控。Host client-config 与反馈远端请求的防线见 `official-feedback-config-boundary.md`。云附件沿用 SaaS，本地日志导出保留。
 
@@ -61,4 +61,4 @@ sequenceDiagram
 7. 执行类型检查、lint、架构检查和受影响测试；分别记录代码问题与依赖或运行时环境的限制。
 8. 直接调用 Host 官方账号/套餐/权益 API 也不能绕过 UI 门控；依赖 spies 证明没有 credential / apiClient / availability / remote-download 调用。用户 BYOK、本地 CLI 和平台网关分别由托管模型边界限制；关闭官方服务不能单独证明这些边界。
 9. 云入口收到 `{ opened: false }` 或命令抛错后，按钮恢复可点击并展示重试提示；重试成功清除提示。等待结果期间重复点击不能再次派发命令。
-10. 织流帮助中不出现上游文档/社区/反馈/建议/漏洞/更新，保留资源管理、导出日志和关于；不挂载 FeedbackCenter。工作区启动查询 `CanOpenCommunity` 返回 false，且不调用远端配置读取器。上游构建菜单和反馈行为保持原样。
+10. 织流帮助中不出现上游文档/社区/反馈/建议/漏洞/更新，保留资源管理、导出日志和关于；自己的反馈与检查更新分别执行织流命令边界，不挂载上游 FeedbackCenter。工作区启动查询 `CanOpenCommunity` 返回 false，且不调用远端配置读取器。上游构建菜单和反馈行为保持原样。

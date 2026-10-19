@@ -105,6 +105,30 @@ describe("织流云窗口生命周期与事件边界", () => {
     );
   });
 
+  it("反馈只导航到固定同源hash且使用原会话，不接受页面提供地址", async () => {
+    const first = await openZhiliuCloudWindow({ cloudUrl: "https://feedback.example.com/" });
+    const feedback = await openZhiliuCloudWindow({
+      cloudUrl: "https://feedback.example.com/",
+      entry: "feedback",
+      appVersion: "3.15.1",
+    });
+    expect(feedback).toBe(first);
+    expect(first.loadURL).toHaveBeenLastCalledWith(
+      "https://feedback.example.com/#/feedback?source=desktop&app_version=3.15.1",
+    );
+    const count = vi.mocked(first.loadURL).mock.calls.length;
+    await openZhiliuCloudWindow({ cloudUrl: "https://feedback.example.com/" });
+    expect(first.loadURL).toHaveBeenCalledTimes(count);
+  });
+
+  it("反馈重试失败也不把原始页面参数抛给renderer", async () => {
+    await openZhiliuCloudWindow({ cloudUrl: "https://feedback-retry.example.com/" });
+    harness.failNextLoad = true;
+    await expect(
+      openZhiliuCloudWindow({ cloudUrl: "https://feedback-retry.example.com/", entry: "feedback" }),
+    ).rejects.toThrow("无法打开织流问题反馈，请检查网络后重试。");
+  });
+
   it("拒绝弹窗、外源导航、重定向和嵌套 webview", async () => {
     const win = await openZhiliuCloudWindow({ cloudUrl: "https://five.example.com" });
     const opener = vi.mocked(win.webContents.setWindowOpenHandler).mock.calls[0]?.[0];

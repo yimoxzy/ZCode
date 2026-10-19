@@ -71,7 +71,7 @@ export function WindowsCaptionMenuButton({
     visible: false,
   });
   const [showCommunityMenuItem, setShowCommunityMenuItem] = useState(false);
-  const showDesktopUpdateEntry = !ZHILIU_DESKTOP_ENABLED && shouldShowDesktopUpdateEntry();
+  const showDesktopUpdateEntry = ZHILIU_DESKTOP_ENABLED || shouldShowDesktopUpdateEntry();
 
   const syncUpdateState = useCallback(async () => {
     if (!platform.getUpdateState) {
@@ -268,9 +268,6 @@ export function WindowsCaptionMenuButton({
         <DropdownMenuSeparator />
         {!ZHILIU_DESKTOP_ENABLED ? (
           <>
-            <DropdownMenuItem onSelect={helpMenuActions.openIssueReport}>
-              {intl.formatMessage({ id: "titleBar.menu.help.feedback" })}
-            </DropdownMenuItem>
             <DropdownMenuItem onSelect={openFeatureRequest}>
               {intl.formatMessage({ id: "workspaceHeader.help.productRequest" })}
             </DropdownMenuItem>
@@ -286,6 +283,9 @@ export function WindowsCaptionMenuButton({
             </DropdownMenuItem>
           </>
         ) : null}
+        <DropdownMenuItem onSelect={helpMenuActions.openIssueReport}>
+          {intl.formatMessage({ id: "titleBar.menu.help.feedback" })}
+        </DropdownMenuItem>
         <DropdownMenuItem onSelect={helpMenuActions.exportLogs}>
           {intl.formatMessage({ id: "titleBar.menu.help.exportLogs" })}
         </DropdownMenuItem>

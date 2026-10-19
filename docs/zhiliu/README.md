@@ -11,6 +11,8 @@
 - 本地项目保留现有窗口与 Host 分层、文件/Git 和应用内记录界面；本批不启动 bundled CLI。依赖 CLI 的推理、工具、Skill/MCP 与自动化尚未开放。
 - 独立应用 ID `ai.zhiliu.desktop`、Electron profile 和 `~/.zhiliu-desktop` 数据根，启动设置、存储扫描/清理与全局 CLI 配置探测一并隔离。
 - 关闭上游账号、套餐、奖励、分享、官方手机 relay、反馈工单和自动更新；保留本地日志。关闭个人模型/Key/端点设置、供应商导入及连接探测，服务端拒绝个人配置和本地模型执行旁路。
+- 客户端「问题反馈」打开织流自己的普通反馈页，与网页共用后台和空间权限；用户预览、确认后提交，可查看处理状态。上游反馈工单继续关闭。
+- 接入[织流独立自动更新](auto-updates.md)，复用原有更新状态机。未配置自有 HTTPS 来源时明确提示未配置，不回退上游；当前技术包尚未启用真实下载和安装升级。
 - 关闭上游遥测初始化/页面注入；保留不上传的本地 crash dump。未初始化 SDK 不得阻断首窗。
 - 织流构建不注册上游 `zcode:` 和 Explorer/Finder 集成，不覆盖同机 ZCode。
 - 修复 Windows autocrlf 对固定 Gen UI 资源字节和摘要校验的影响，保留完整校验。
@@ -67,6 +69,6 @@ node packages/desktop/scripts/zhiliu-installed-smoke.mjs
 
 仓库标准 `pnpm typecheck` 通过。额外尝试 desktop 全部 tsconfig 时发现原有 main/renderer 的 rootDir、Window bridge 声明等错误；该补充检查不宣称通过，详见本机验收记录。
 
-安装产物与验收：[2026-10-19 平台授权桌面技术版](releases/2026-10-19-managed-preview.md)。
+初版安装产物与验收：[2026-10-19 平台授权桌面技术版](releases/2026-10-19-managed-preview.md)。后续品牌、反馈与更新验收以对应批次发布记录为准。
 
 关联设计：[产品边界](../../specs/zhiliu-desktop-edition.md)、[官方服务隔离](official-cloud-isolation.md)。

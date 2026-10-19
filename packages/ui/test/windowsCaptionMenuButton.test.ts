@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { cleanup, render } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { DesktopCommandIds } from "@zcode/shared";
 
 vi.mock("@/i18n/IntlProvider.js", () => ({
   useZCodeIntl: () => ({
@@ -261,11 +262,9 @@ describe("WindowsCaptionMenuButton", () => {
 
     const html = container.innerHTML;
     for (const label of [
-      "titleBar.menu.help.feedback",
       "workspaceHeader.help.productRequest",
       "sidebar.menu.community",
       "workspaceHeader.help.docs",
-      "titleBar.menu.help.checkForUpdates",
     ]) {
       expect(html).not.toContain(label);
     }
@@ -273,8 +272,17 @@ describe("WindowsCaptionMenuButton", () => {
     expect(html).toContain("titleBar.menu.help.resourceManager");
     expect(html).toContain("titleBar.menu.help.exportLogs");
     expect(capturedWindowsCaptionMenu.canOpenCommunity).not.toHaveBeenCalled();
-    expect(capturedWindowsCaptionMenu.getUpdateState).not.toHaveBeenCalled();
+    expect(capturedWindowsCaptionMenu.getUpdateState).toHaveBeenCalled();
     expect(capturedWindowsCaptionMenu.openExternal).not.toHaveBeenCalled();
+    expect(capturedWindowsCaptionMenu.openSubmit).not.toHaveBeenCalled();
+    const feedback = capturedWindowsCaptionMenu.menuItems.find(
+      (item) => item.label === "titleBar.menu.help.feedback",
+    );
+    expect(feedback).toBeDefined();
+    await feedback?.onSelect?.();
+    expect(capturedWindowsCaptionMenu.executeDesktopCommand).toHaveBeenCalledWith(
+      DesktopCommandIds.OpenFeedback,
+    );
     expect(capturedWindowsCaptionMenu.openSubmit).not.toHaveBeenCalled();
   });
 });

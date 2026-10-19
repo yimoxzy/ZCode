@@ -135,18 +135,23 @@ describe("WorkspaceHelpMenuButton", () => {
       for (const name of [
         "docs",
         "community",
-        "issueReport",
         "productRequest",
         "reportVulnerability",
       ]) {
         expect(html).not.toContain(`workspaceHeader.help.${name}`);
       }
-      expect(html).not.toContain("titleBar.menu.help.checkForUpdates");
+      expect(html).toContain("titleBar.menu.help.checkForUpdates");
       expect(html).toContain("titleBar.menu.help.resourceManager");
       expect(html).toContain("titleBar.menu.help.exportLogs");
       expect(html).toContain("titleBar.menu.help.about");
       expect(captured.vulnerabilityQueryEnabled).toBe(false);
       expect(captured.openExternal).not.toHaveBeenCalled();
+      const feedback = captured.menuItems.find(
+        (item) => item.label === "workspaceHeader.help.issueReport",
+      );
+      expect(feedback).toBeDefined();
+      await feedback?.onSelect?.();
+      expect(captured.executeDesktopCommand).toHaveBeenCalledWith(DesktopCommandIds.OpenFeedback);
     } finally {
       captured.zhiliu = false;
       captured.zsrcUrl = null;

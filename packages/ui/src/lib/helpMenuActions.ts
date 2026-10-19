@@ -1,4 +1,4 @@
-import type { IPlatformService } from "@zcode/shared";
+import { DesktopCommandIds, ZHILIU_DESKTOP_ENABLED, type IPlatformService } from "@zcode/shared";
 import type { IntlInstance } from "@/i18n/IntlProvider.js";
 import type { FeedbackSubmitDraft } from "@/feedback/feedbackStore.js";
 import { runExportLogsAction } from "@/lib/exportLogsAction.js";
@@ -15,12 +15,17 @@ export function createHelpMenuActionHandlers({
   intl,
   openSubmit,
 }: {
-  platform: Pick<IPlatformService, "captureWindowScreenshot" | "exportLogs" | "openExternal">;
+  platform: Pick<IPlatformService, "captureWindowScreenshot" | "exportLogs" | "openExternal"> &
+    Partial<Pick<IPlatformService, "executeDesktopCommand">>;
   intl: IntlInstance;
   openSubmit: (draft?: FeedbackSubmitDraft) => void;
 }): HelpMenuActionHandlers {
   return {
     openIssueReport: async () => {
+      if (ZHILIU_DESKTOP_ENABLED) {
+        await platform.executeDesktopCommand?.(DesktopCommandIds.OpenFeedback);
+        return;
+      }
       openSubmit({
         type: "bug",
         module: "其它",

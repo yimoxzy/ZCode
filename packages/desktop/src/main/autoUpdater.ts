@@ -1,14 +1,21 @@
 /* eslint-disable max-lines -- autoUpdater 需要集中维护 Electron 事件、菜单状态与 IPC 交互，过度拆分会让更新状态流更难追踪 */
-import { app, BrowserWindow, ipcMain, Menu } from "electron";
+import { app, BrowserWindow, ipcMain, Menu, session } from "electron";
 import type { ISettingService } from "@zcode/services";
 import pkg, { CancellationToken } from "electron-updater";
 import semver from "semver";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+import { parse as parseYaml } from "yaml";
 const { autoUpdater } = pkg;
 import {
   DEFAULT_LOCALE,
   DEFAULT_ZCODE_ENDPOINT_ORIGIN,
   PlatformChannels,
   ZCODE_VERSION,
+  ZHILIU_DESKTOP_ENABLED,
+  ZHILIU_UPDATE_MANIFEST_URL,
+  ZHILIU_UPDATE_INSTALL_ENABLED,
+  ZHILIU_UPDATE_PUBLISHER_NAME,
   desktopMenuMessageIds,
   formatDesktopMenuMessage,
   getDesktopMenuMessage,
@@ -21,6 +28,33 @@ import {
 } from "@zcode/shared";
 import { logger } from "./logger.js";
 import { ManifestUpdateProvider, getElectronReleasePlatform } from "./manifestUpdateProvider.js";
+import {
+  assertZhiliuUpdateSigningConfiguration,
+  isZhiliuUpdateRequestAllowed,
+  resolveZhiliuUpdatePolicy,
+} from "./zhiliuUpdatePolicy.js";
+
+export function getZhiliuUpdatePolicy() {
+  return resolveZhiliuUpdatePolicy({
+    manifestUrl: ZHILIU_UPDATE_MANIFEST_URL,
+    installEnabled: ZHILIU_UPDATE_INSTALL_ENABLED,
+    publisherName: ZHILIU_UPDATE_PUBLISHER_NAME,
+  });
+}
+
+/** Main 只决定是否装配；地址仍由本模块读取编译期配置，不能从 Renderer/运行时传入。 */
+export function getZhiliuAutoUpdaterInitOptions(): { enabled: boolean } {
+  return { enabled: Boolean(getZhiliuUpdatePolicy().manifestUrl) };
+}
+
+let zhiliuUpdateInstallationVerified = false;
+
+function isZhiliuUpdateInstallationBlocked(): boolean {
+  return (
+    ZHILIU_DESKTOP_ENABLED &&
+    (!zhiliuUpdateInstallationVerified || !getZhiliuUpdatePolicy().installEnabled)
+  );
+}
 
 export const CHECK_FOR_UPDATE_MENU_ID = "check-for-update";
 const AUTO_UPDATE_POLL_INTERVAL_MS = 15 * 60 * 1000;
@@ -62,6 +96,7 @@ let autoUpdaterSettingService: SettingServiceLike | undefined;
 // （占位 feed、autoDownload 默认值）。任何漏改成按身份判断的入口若仍调用手动检查，
 // 都会对占位 feed 发真实请求。这里记住“本 flavor 已禁用”，让手动检查在模块内部 fail-closed。
 let autoUpdaterDisabledForProductFlavor = false;
+let autoUpdaterDisabledReason: string | null = null;
 
 type SettingServiceLike = Pick<ISettingService, "get" | "update">;
 
@@ -423,6 +458,12 @@ function buildDownloadProgressState(
 }
 
 async function quitAndInstallUpdate(rejectUnavailable = false) {
+  if (isZhiliuUpdateInstallationBlocked()) {
+    const error = new Error("当前织流技术版仅检查更新，尚未开放下载安装");
+    notifyForceAutoUpdate({ kind: "error", message: error.message });
+    if (rejectUnavailable) throw error;
+    return;
+  }
   if (
     menuState.kind === "update-downloaded" &&
     readyUpdateVersion &&
@@ -781,6 +822,27 @@ async function syncAutoUpdateCheckChannelFromSettings(
 }
 
 function applyManifestUpdateProvider(options: InitAutoUpdaterOptions): void {
+  if (ZHILIU_DESKTOP_ENABLED) {
+    const policy = getZhiliuUpdatePolicy();
+    if (!policy.manifestUrl) throw new Error("尚未配置织流更新服务");
+    // electron-updater 的网络请求和下载固定使用此 partition；webRequest 对重定向也重新裁决。
+    const manifestUrl = policy.manifestUrl;
+    session
+      .fromPartition("electron-updater", { cache: false })
+      .webRequest.onBeforeRequest({ urls: ["*://*/*"] }, (request, callback) =>
+        callback({ cancel: !isZhiliuUpdateRequestAllowed(request.url, manifestUrl) }),
+      );
+    autoUpdater.setFeedURL({
+      provider: "custom",
+      updateProvider: ManifestUpdateProvider,
+      zhiliuManifestUrl: policy.manifestUrl,
+      deviceMid: options.deviceMid,
+      releasePlatform: getElectronReleasePlatform(),
+      resolveReleaseChannel: () => resolveUpdateReleaseChannel(options.settingService),
+    });
+    autoUpdater.allowDowngrade = false;
+    return;
+  }
   const manifestUrl = options.updateFeedSource?.url.trim();
   autoUpdater.setFeedURL({
     provider: "custom",
@@ -1124,6 +1186,7 @@ async function isSkippedUpdateVersion(
 async function shouldAutoDownloadAndInstallUpdates(
   settingService: SettingServiceLike | undefined,
 ): Promise<boolean> {
+  if (isZhiliuUpdateInstallationBlocked()) return false;
   if (!settingService) {
     return false;
   }
@@ -1227,6 +1290,17 @@ async function clearSkippedUpdateVersionForManualCheck(
 }
 
 export function downloadAvailableUpdate(reason = "renderer") {
+  if (isZhiliuUpdateInstallationBlocked()) {
+    const message = "当前织流技术版仅检查更新，尚未开放下载安装";
+    logger.info(`[auto-update] ${message}`);
+    notifyForceAutoUpdate({ kind: "error", message });
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) {
+        win.webContents.send(PlatformChannels.UpdateCheckResult, { kind: "error", message });
+      }
+    }
+    return;
+  }
   if (!canUseAutoUpdaterInCurrentRuntime()) {
     logger.info(`[auto-update] skip ${reason} download: not packaged`);
     return;
@@ -1505,7 +1579,27 @@ export async function acknowledgePostUpdateReleaseNotes(
 }
 
 export async function initAutoUpdater(options: InitAutoUpdaterOptions = {}): Promise<void> {
-  if (options.enabled === false) {
+  autoUpdaterDisabledReason = null;
+  zhiliuUpdateInstallationVerified = false;
+  if (ZHILIU_DESKTOP_ENABLED) {
+    try {
+      const policy = getZhiliuUpdatePolicy();
+      if (!policy.manifestUrl) {
+        autoUpdaterDisabledReason = "尚未配置织流更新服务";
+      } else if (policy.installEnabled && process.platform === "win32") {
+        const diskConfiguration = parseYaml(
+          await readFile(join(process.resourcesPath, "app-update.yml"), "utf8"),
+        );
+        assertZhiliuUpdateSigningConfiguration(policy, diskConfiguration);
+      }
+      zhiliuUpdateInstallationVerified =
+        Boolean(policy.manifestUrl) && policy.installEnabled && options.enabled !== false;
+    } catch (error) {
+      // 配置/签名预检失败不能回退到 electron-updater 默认 feed。
+      autoUpdaterDisabledReason = error instanceof Error ? error.message : "织流更新配置校验失败";
+    }
+  }
+  if (options.enabled === false || autoUpdaterDisabledReason) {
     autoUpdaterDisabledForProductFlavor = true;
     if (autoUpdatePollTimer) {
       clearInterval(autoUpdatePollTimer);
@@ -1873,6 +1967,14 @@ export function requestForceAutoUpdate(
   logger.info(`[force-update] 自动升级开始 reason=${reason}`);
   onStateChange({ kind: "checking" });
 
+  if (
+    ZHILIU_DESKTOP_ENABLED &&
+    (autoUpdaterDisabledForProductFlavor || !getZhiliuUpdatePolicy().manifestUrl)
+  ) {
+    onStateChange({ kind: "error", message: autoUpdaterDisabledReason ?? "尚未配置织流更新服务" });
+    return dispose;
+  }
+
   if (!canUseAutoUpdaterInCurrentRuntime()) {
     const message = "not packaged";
     logger.info(`[force-update] 自动升级跳过：${message}`);
@@ -1933,6 +2035,12 @@ export function requestForceAutoUpdate(
 export function requestAutoUpdateCheckWithoutWindow(reason = "force-update") {
   logger.info(`[auto-update] ${reason}: user requested update check without renderer window`);
 
+  if (
+    ZHILIU_DESKTOP_ENABLED &&
+    (autoUpdaterDisabledForProductFlavor || !getZhiliuUpdatePolicy().manifestUrl)
+  )
+    return;
+
   if (!canUseAutoUpdaterInCurrentRuntime()) {
     logger.info(`[auto-update] skip ${reason}: not packaged`);
     return;
@@ -1984,6 +2092,17 @@ export function checkForUpdateMenuClick(originWindow?: BrowserWindow | null) {
 
   if (!targetWindow) {
     logger.warn("[auto-update] manual check: no target window to report to");
+    return;
+  }
+
+  if (
+    ZHILIU_DESKTOP_ENABLED &&
+    (autoUpdaterDisabledReason || !getZhiliuUpdatePolicy().manifestUrl)
+  ) {
+    targetWindow.webContents.send(PlatformChannels.UpdateCheckResult, {
+      kind: "error",
+      message: autoUpdaterDisabledReason ?? "尚未配置织流更新服务",
+    } satisfies UpdateCheckResultPayload);
     return;
   }
 

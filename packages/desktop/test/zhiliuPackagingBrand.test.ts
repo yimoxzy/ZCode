@@ -2,6 +2,10 @@ import { readFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { createHash } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { validateConfiguration } from "app-builder-lib/out/util/config/config.js";
+import { getAppUpdatePublishConfiguration } from "app-builder-lib/out/publish/PublishManager.js";
+import { AppInfo, Platform } from "app-builder-lib";
+import { Arch, DebugLogger } from "builder-util";
 
 const packageRoot = resolve(import.meta.dirname, "..");
 const assetRoot = resolve(packageRoot, "build/zhiliu");
@@ -108,6 +112,36 @@ describe("织流安装包品牌资源", () => {
     });
     expect(config.extraMetadata?.author).not.toHaveProperty("email");
     expect(config.linux?.maintainer).toBe("织流");
+    expect(config.publish).toBeNull();
+  });
+
+  it("自有 generic 源和 publisherName 通过真实 builder schema 与 app-update 配置生成", async () => {
+    vi.stubEnv("ZHILIU_UPDATE_MANIFEST_URL", "https://updates.example.test/releases/manifest");
+    vi.stubEnv("ZHILIU_UPDATE_PUBLISHER_NAME", "Zhiliu Ltd");
+    vi.stubEnv("ZHILIU_UPDATE_INSTALL_ENABLED", "0");
+    const config = await loadConfig(true);
+    await validateConfiguration(config, new DebugLogger(false));
+    const appInfo = new AppInfo({ config, metadata: { ...config.extraMetadata } } as never);
+    const packager = {
+      platform: Platform.WINDOWS,
+      platformSpecificBuildOptions: config.win,
+      config,
+      appInfo,
+      info: { config },
+      expandMacro: (value: string) => value,
+    };
+    const updateConfiguration = await getAppUpdatePublishConfiguration(
+      packager as never,
+      config.nsis,
+      Arch.x64,
+      true,
+    );
+    expect(updateConfiguration).toMatchObject({
+      provider: "generic",
+      url: "https://updates.example.test/releases/",
+      publisherName: ["Zhiliu Ltd"],
+      updaterCacheDirName: "zhiliu-desktop-updater",
+    });
   });
 
   it("preserves upstream branding and installer assets when Zhiliu is disabled", async () => {

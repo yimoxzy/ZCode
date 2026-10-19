@@ -8,12 +8,14 @@ export function useOpenZhiliuCloud() {
   const platform = usePlatform();
   const [opening, setOpening] = useState(false);
   const [failed, setFailed] = useState(false);
-  const openCloud = async () => {
+  const open = async (
+    command: typeof DesktopCommandIds.OpenZhiliuCloud | typeof DesktopCommandIds.OpenFeedback,
+  ) => {
     if (opening) return;
     setOpening(true);
     setFailed(false);
     try {
-      const result = await platform.executeDesktopCommand(DesktopCommandIds.OpenZhiliuCloud);
+      const result = await platform.executeDesktopCommand(command);
       if (typeof result === "object" && result !== null && "opened" in result) {
         setFailed(result.opened === false);
       }
@@ -24,5 +26,10 @@ export function useOpenZhiliuCloud() {
       setOpening(false);
     }
   };
-  return { openCloud, opening, failed };
+  return {
+    openCloud: () => open(DesktopCommandIds.OpenZhiliuCloud),
+    openFeedback: () => open(DesktopCommandIds.OpenFeedback),
+    opening,
+    failed,
+  };
 }

@@ -7,10 +7,17 @@ import { getUpdateMenuLabelId, getUpdateMenuLabelValues } from "@/lib/desktopUpd
 
 vi.mock("@zcode/shared", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@zcode/shared")>()),
-  ZCODE_PRODUCT_FLAVOR: "production",
+  get ZCODE_PRODUCT_FLAVOR() {
+    return mocks.flavor;
+  },
+  get ZHILIU_DESKTOP_ENABLED() {
+    return mocks.zhiliu;
+  },
 }));
 
 const mocks = vi.hoisted(() => ({
+  flavor: "production" as "production" | "preview",
+  zhiliu: false,
   platform: {
     getUpdateState: vi.fn(),
     onUpdateStateChanged: vi.fn(),
@@ -96,9 +103,28 @@ afterEach(() => {
   act(() => root?.unmount());
   root = undefined;
   vi.clearAllMocks();
+  mocks.flavor = "production";
+  mocks.zhiliu = false;
 });
 
 describe("帮助菜单更新状态", () => {
+  it("织流即使编译身份为 Preview 也保留自有检查入口", () => {
+    mocks.flavor = "preview";
+    mocks.zhiliu = true;
+    mocks.platform.getUpdateState.mockResolvedValue({ kind: "idle", enabled: true });
+    mocks.platform.onUpdateStateChanged.mockReturnValue(() => {});
+    mount();
+    expect(latest.visible).toBe(true);
+    expect(mocks.platform.getUpdateState).toHaveBeenCalledOnce();
+  });
+
+  it("上游 Preview 仍不订阅更新状态", () => {
+    mocks.flavor = "preview";
+    mount();
+    expect(latest.visible).toBe(false);
+    expect(mocks.platform.getUpdateState).not.toHaveBeenCalled();
+  });
+
   it("实时检查状态不被较晚返回的 idle 快照覆盖，并在卸载时取消订阅", async () => {
     let resolve!: (state: UpdateStatePayload) => void;
     let listener!: (state: UpdateStatePayload) => void;

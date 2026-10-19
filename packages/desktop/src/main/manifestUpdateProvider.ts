@@ -3,6 +3,7 @@ import type { CustomPublishOptions, PackageFileInfo } from "builder-util-runtime
 import {
   DEFAULT_ZCODE_ENDPOINT_ORIGIN,
   normalizeZCodeEndpointOrigin,
+  ZHILIU_DESKTOP_ENABLED,
   type ElectronReleaseChannel,
 } from "@zcode/shared";
 import {
@@ -18,6 +19,7 @@ import {
 } from "electron-updater";
 import type { ProviderRuntimeOptions } from "electron-updater/out/providers/Provider.js";
 import { parse as parseYaml } from "yaml";
+import { assertZhiliuUpdateArtifact, resolveZhiliuUpdatePolicy } from "./zhiliuUpdatePolicy.js";
 
 export const ELECTRON_MANIFEST_API_PATH = "/api/v1/releases/electron/manifest";
 
@@ -31,6 +33,8 @@ export interface ManifestUpdateProviderOptions extends CustomPublishOptions {
   releaseChannel?: ElectronReleaseChannel;
   resolveEndpointOrigin?: () => string | Promise<string>;
   resolveReleaseChannel?: () => ElectronReleaseChannel | Promise<ElectronReleaseChannel>;
+  /** 织流仅接受打包配置的清单，不读取上游 endpoint 或运行时 feed。 */
+  zhiliuManifestUrl?: string;
 }
 
 function normalizeReleaseChannel(channel: string | null | undefined): ElectronReleaseChannel {
@@ -182,7 +186,8 @@ export class ManifestUpdateProvider extends Provider<UpdateInfo> {
   private readonly options: ManifestUpdateProviderOptions;
   private readonly releasePlatform: string;
   private readonly linuxExtensions: readonly string[] | null;
-  private resolveBaseUrl = new URL(DEFAULT_ZCODE_ENDPOINT_ORIGIN);
+  private resolveBaseUrl: URL;
+  private readonly zhiliuManifestUrl: string | null;
 
   constructor(
     options: ManifestUpdateProviderOptions,
@@ -190,12 +195,20 @@ export class ManifestUpdateProvider extends Provider<UpdateInfo> {
     runtimeOptions: ProviderRuntimeOptions,
   ) {
     super(runtimeOptions);
+    this.zhiliuManifestUrl = ZHILIU_DESKTOP_ENABLED
+      ? resolveZhiliuUpdatePolicy({ manifestUrl: options.zhiliuManifestUrl }).manifestUrl
+      : null;
+    if (ZHILIU_DESKTOP_ENABLED && !this.zhiliuManifestUrl) {
+      throw new Error("尚未配置织流更新服务");
+    }
     this.options = options;
     this.linuxExtensions = getLinuxUpdateExtensions(updater);
     this.releasePlatform = options.releasePlatform?.trim() || getElectronReleasePlatform();
-    this.resolveBaseUrl = new URL(
-      normalizeZCodeEndpointOrigin(options.endpointOrigin ?? DEFAULT_ZCODE_ENDPOINT_ORIGIN),
-    );
+    this.resolveBaseUrl = this.zhiliuManifestUrl
+      ? new URL("/", this.zhiliuManifestUrl)
+      : new URL(
+          normalizeZCodeEndpointOrigin(options.endpointOrigin ?? DEFAULT_ZCODE_ENDPOINT_ORIGIN),
+        );
   }
 
   override get isUseMultipleRangeRequest(): boolean {
@@ -207,7 +220,7 @@ export class ManifestUpdateProvider extends Provider<UpdateInfo> {
     const releaseChannel = await this.resolveReleaseChannel();
     const manifestUrl = buildElectronManifestUrl({
       endpointOrigin,
-      manifestUrl: this.options.manifestUrl,
+      manifestUrl: this.zhiliuManifestUrl ?? this.options.manifestUrl,
       platform: this.releasePlatform,
       deviceMid: this.options.deviceMid,
       channel: releaseChannel,
@@ -240,10 +253,20 @@ export class ManifestUpdateProvider extends Provider<UpdateInfo> {
   }
 
   override resolveFiles(updateInfo: UpdateInfo): ResolvedUpdateFileInfo[] {
+    if (this.zhiliuManifestUrl) {
+      for (const file of readManifestFileList(updateInfo)) {
+        assertZhiliuUpdateArtifact(file.url, file.sha512, this.zhiliuManifestUrl);
+      }
+      const packages = (updateInfo as { packages?: Record<string, PackageFileInfo> }).packages;
+      for (const file of Object.values(packages ?? {})) {
+        assertZhiliuUpdateArtifact(file.path, file.sha512, this.zhiliuManifestUrl);
+      }
+    }
     return resolveManifestFiles(updateInfo, this.resolveBaseUrl, this.linuxExtensions);
   }
 
   private async resolveEndpointOrigin(): Promise<string> {
+    if (this.zhiliuManifestUrl) return new URL(this.zhiliuManifestUrl).origin;
     const resolved =
       (await this.options.resolveEndpointOrigin?.()) ??
       this.options.endpointOrigin ??

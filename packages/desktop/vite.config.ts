@@ -10,6 +10,7 @@ import { pdfJsCMapsPlugin } from "../ui/vite/pdfJsCMapsPlugin.js";
 import { getBuildMetadata } from "./scripts/build-metadata.mjs";
 import { resolveDesktopProductFlavor } from "./scripts/desktop-product-identity.mjs";
 import { transformZhiliuRendererHtml } from "./scripts/zhiliu-renderer-branding.mjs";
+import { resolveZhiliuUpdateBuildPolicy } from "./src/main/zhiliuUpdatePolicy.ts";
 
 // 动态加载仓库根的构建工具，避免配置打包后其 import.meta.dirname 被重定位到 desktop。
 // 构建期可选能力（ARMS、事件上报、自动更新），见 docs/desktop/build-time-optional-capabilities.md
@@ -21,6 +22,9 @@ const buildTimeConfigDefines = createBuildTimeConfigDefines(
 );
 
 const buildMetadata = getBuildMetadata();
+const zhiliuUpdatePolicy = resolveZhiliuUpdateBuildPolicy(
+  process.env.ZHILIU_DESKTOP === "1" ? process.env : {},
+);
 const desktopRequire = createRequire(import.meta.url);
 
 interface IstanbulInstrumenter {
@@ -223,6 +227,9 @@ export default defineConfig(({ mode }) => {
       __ZCODE_PRODUCT_FLAVOR__: JSON.stringify(zcodeProductFlavor),
       __ZHILIU_DESKTOP_ENABLED__: JSON.stringify(process.env.ZHILIU_DESKTOP === "1"),
       __ZHILIU_CLOUD_URL__: JSON.stringify(process.env.ZHILIU_CLOUD_URL?.trim() ?? ""),
+      __ZHILIU_UPDATE_MANIFEST_URL__: JSON.stringify(zhiliuUpdatePolicy.manifestUrl ?? ""),
+      __ZHILIU_UPDATE_INSTALL_ENABLED__: JSON.stringify(zhiliuUpdatePolicy.installEnabled),
+      __ZHILIU_UPDATE_PUBLISHER_NAME__: JSON.stringify(zhiliuUpdatePolicy.publisherName ?? ""),
       ...buildTimeConfigDefines,
       __ZCODE_LOCAL_DEVELOPMENT_RUNTIME__: JSON.stringify(mode !== "production"),
       "import.meta.env.VITE_ZCODE_BASE_URL": JSON.stringify(zcodeEndpointOrigin),

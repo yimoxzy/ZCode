@@ -4,6 +4,7 @@ import { pathToFileURL } from "node:url";
 import { defineConfig } from "tsup";
 import { getBuildMetadata } from "./scripts/build-metadata.mjs";
 import { resolveDesktopProductFlavor } from "./scripts/desktop-product-identity.mjs";
+import { resolveZhiliuUpdateBuildPolicy } from "./src/main/zhiliuUpdatePolicy.ts";
 const { copyGenUiRuntimeAssets } = await import(
   pathToFileURL(resolve(import.meta.dirname, "scripts/gen-ui-runtime-assets.mjs")).href
 );
@@ -20,6 +21,9 @@ const buildTimeConfigDefines = createBuildTimeConfigDefines(
 );
 
 const buildMetadata = getBuildMetadata();
+const zhiliuUpdatePolicy = resolveZhiliuUpdateBuildPolicy(
+  process.env.ZHILIU_DESKTOP === "1" ? process.env : {},
+);
 
 function resolveZCodeEnv(value: string | undefined): "test" | "production" {
   return value?.trim().toLowerCase() === "production" ? "production" : "test";
@@ -198,6 +202,9 @@ function createSharedDefines() {
     __ZCODE_PRODUCT_FLAVOR__: JSON.stringify(zcodeProductFlavor),
     __ZHILIU_DESKTOP_ENABLED__: JSON.stringify(process.env.ZHILIU_DESKTOP === "1"),
     __ZHILIU_CLOUD_URL__: JSON.stringify(process.env.ZHILIU_CLOUD_URL?.trim() ?? ""),
+    __ZHILIU_UPDATE_MANIFEST_URL__: JSON.stringify(zhiliuUpdatePolicy.manifestUrl ?? ""),
+    __ZHILIU_UPDATE_INSTALL_ENABLED__: JSON.stringify(zhiliuUpdatePolicy.installEnabled),
+    __ZHILIU_UPDATE_PUBLISHER_NAME__: JSON.stringify(zhiliuUpdatePolicy.publisherName ?? ""),
     ...buildTimeConfigDefines,
     // Computer Use Helper build identity — helperInstaller 读它决定下载哪个 Helper bundle。
     // 缺失时 installer 抛 "Packaged ZCode is missing its embedded Computer Use Helper build identity"。

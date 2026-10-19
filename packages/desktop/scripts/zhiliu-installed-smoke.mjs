@@ -121,6 +121,11 @@ try {
     assert.equal(context.pages().length, 2);
     assert.equal(await cloud.getByRole("textbox", { name: "draft" }).inputValue(), "saved draft");
     checks.push("singleton keeps draft");
+    await local.getByTestId("zhiliu-open-feedback").click();
+    await cloud.waitForURL((url) => url.hash.startsWith("#/feedback?"));
+    assert.match(cloud.url(), /source=desktop&app_version=/u);
+    assert.equal(await cloud.getByRole("textbox", { name: "draft" }).inputValue(), "saved draft");
+    checks.push("own feedback entry preserves the cloud session and draft");
   }
   assert.equal(new URL(cloud.url()).origin, target.origin);
   assert.deepEqual(

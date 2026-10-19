@@ -51,7 +51,7 @@ export function WorkspaceHelpMenuButton({
   const [open, setOpen] = useState(false);
   const { url: vulnerabilityReportUrl, loading: vulnerabilityReportLoading } =
     useVulnerabilityReportUrl(open && !ZHILIU_DESKTOP_ENABLED);
-  const updateMenu = useDesktopUpdateMenu(isDesktop && !ZHILIU_DESKTOP_ENABLED);
+  const updateMenu = useDesktopUpdateMenu(isDesktop);
   const openFeedbackSubmit = useFeedbackStore((state) => state.openSubmit);
   const openFeatureRequest = useFeedbackStore((state) => state.openFeatureRequest);
   const helpMenuLabel = intl.formatMessage({ id: "workspaceHeader.help.menu" });
@@ -130,6 +130,12 @@ export function WorkspaceHelpMenuButton({
               {intl.formatMessage({ id: "workspaceHeader.help.productRequest" })}
             </DropdownMenuItem>
           </>
+        ) : null}
+        {ZHILIU_DESKTOP_ENABLED ? (
+          <DropdownMenuItem onSelect={helpMenuActions.openIssueReport}>
+            <MessageSquareIcon className="size-4" />
+            {intl.formatMessage({ id: "workspaceHeader.help.issueReport" })}
+          </DropdownMenuItem>
         ) : null}
         {/* Windows/Linux 没有原生菜单栏，自绘标题栏箭头菜单也已下线，
             资源管理器只能从这里进；Web 端没有该窗口，不渲染。 */}

@@ -93,6 +93,9 @@ import { createDesktopTelemetryFetch } from "./desktopTelemetryFetch.js";
 import {
   acknowledgePostUpdateReleaseNotes,
   getAutoUpdaterState,
+  checkForUpdateMenuClick,
+  getZhiliuAutoUpdaterInitOptions,
+  getZhiliuUpdatePolicy,
   hydratePendingPostUpdateReleaseNotes,
   initAutoUpdater,
   onAutoUpdaterStateChanged,
@@ -1504,12 +1507,18 @@ async function executeDesktopCommandForApp(
   command: Parameters<typeof executeDesktopCommand>[0]["command"],
   senderWindow?: BrowserWindow | null,
 ) {
-  if (command === DesktopCommandIds.OpenZhiliuCloud) {
+  if (
+    command === DesktopCommandIds.OpenZhiliuCloud ||
+    (ZHILIU_DESKTOP_ENABLED && command === DesktopCommandIds.OpenFeedback)
+  ) {
     if (!ZHILIU_DESKTOP_ENABLED) throw new Error("Zhiliu is not enabled in this build");
     try {
       await openZhiliuCloudWindow({
         cloudUrl: process.env.ZHILIU_CLOUD_URL?.trim() || ZHILIU_CLOUD_URL,
         iconPath,
+        ...(command === DesktopCommandIds.OpenFeedback
+          ? { entry: "feedback" as const, appVersion: ZCODE_VERSION }
+          : {}),
         logger,
       });
       return { opened: true };
@@ -1525,6 +1534,18 @@ async function executeDesktopCommandForApp(
     }
   }
   if (ZHILIU_DESKTOP_ENABLED) {
+    if (command === DesktopCommandIds.CheckForUpdates) {
+      if (!getZhiliuUpdatePolicy().manifestUrl) {
+        await dialog.showMessageBox({
+          type: "info",
+          title: "织流更新",
+          message: "当前技术版尚未配置更新源",
+          detail: "正式发布后可在这里检查织流的新版本，更新源由平台统一管理。",
+        });
+        return;
+      }
+      return checkForUpdateMenuClick(senderWindow);
+    }
     if (command === DesktopCommandIds.ShowAbout) {
       await dialog.showMessageBox({
         title: "关于织流",
@@ -1537,8 +1558,6 @@ async function executeDesktopCommandForApp(
     }
     const upstreamOnlyCommands: ReadonlySet<string> = new Set([
       DesktopCommandIds.OpenChangelog,
-      DesktopCommandIds.CheckForUpdates,
-      DesktopCommandIds.OpenFeedback,
       DesktopCommandIds.OpenCommunity,
       DesktopCommandIds.SetZCodeEndpointProduction,
       DesktopCommandIds.SetZCodeEndpointTest,
@@ -2308,7 +2327,9 @@ app.whenReady().then(async () => {
   // （见 docs/desktop/build-time-optional-capabilities.md）。
   void initAutoUpdater({
     enabled:
-      !ZHILIU_DESKTOP_ENABLED && ZCODE_PRODUCT_FLAVOR === "production" && ZCODE_AUTO_UPDATE_ENABLED,
+      ZHILIU_DESKTOP_ENABLED
+        ? getZhiliuAutoUpdaterInitOptions().enabled
+        : ZCODE_PRODUCT_FLAVOR === "production" && ZCODE_AUTO_UPDATE_ENABLED,
     onBeforeQuitAndInstall: async () => {
       notifyStabilityLifecycle("update_install");
       await prepareAppQuit("auto-update quitAndInstall", "update-install");

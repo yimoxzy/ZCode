@@ -1,4 +1,4 @@
-import { Cloud, FolderOpen } from "lucide-react";
+import { Cloud, FolderOpen, MessageSquare } from "lucide-react";
 import { Button } from "@/components/ui/button.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { useOpenZhiliuCloud } from "@/hooks/useOpenZhiliuCloud.js";
@@ -7,7 +7,7 @@ import { ApplicationBrandMark } from "@/components/ui/ApplicationBrandMark.js";
 /** 导航条占用正常布局；云账号保留在独立工作台，不读取本地 OAuth 凭据。 */
 export function ZhiliuWorkspaceSwitcher({ onOpenLocal }: { onOpenLocal: () => void }) {
   const { locale } = useZCodeIntl();
-  const { openCloud, opening, failed } = useOpenZhiliuCloud();
+  const { openCloud, openFeedback, opening, failed } = useOpenZhiliuCloud();
   const chinese = locale === "zh-CN";
 
   return (
@@ -50,6 +50,17 @@ export function ZhiliuWorkspaceSwitcher({ onOpenLocal }: { onOpenLocal: () => vo
           {chinese ? "云工作台未能打开，请重试" : "Could not open Cloud. Please retry."}
         </span>
       )}
+      <Button
+        variant="ghost"
+        size="sm"
+        className="ml-auto [app-region:no-drag]"
+        disabled={opening}
+        onClick={() => void openFeedback()}
+        data-testid="zhiliu-open-feedback"
+      >
+        <MessageSquare />
+        {chinese ? "问题反馈" : "Feedback"}
+      </Button>
     </nav>
   );
 }

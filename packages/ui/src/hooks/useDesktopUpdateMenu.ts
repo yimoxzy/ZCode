@@ -1,4 +1,4 @@
-import { DesktopCommandIds, type UpdateStatePayload } from "@zcode/shared";
+import { DesktopCommandIds, ZHILIU_DESKTOP_ENABLED, type UpdateStatePayload } from "@zcode/shared";
 import { useEffect, useState } from "react";
 import { usePlatform } from "@/hooks/usePlatform.js";
 import {
@@ -10,7 +10,8 @@ import { logger } from "@/logger.js";
 
 export function useDesktopUpdateMenu(isDesktop: boolean) {
   const platform = usePlatform();
-  const visible = isDesktop && shouldShowDesktopUpdateEntry();
+  // 织流由自己的更新策略裁决，不能被上游 Preview 身份隐藏帮助入口。
+  const visible = isDesktop && (ZHILIU_DESKTOP_ENABLED || shouldShowDesktopUpdateEntry());
   const [state, setState] = useState<UpdateStatePayload | null>(null);
 
   useEffect(() => {
