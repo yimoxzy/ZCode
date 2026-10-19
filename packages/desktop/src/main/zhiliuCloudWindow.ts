@@ -13,6 +13,8 @@ export interface OpenZhiliuCloudWindowOptions {
   entry?: "feedback" | "devices";
   authorizationId?: string;
   appVersion?: string;
+  sessionTicket?: string;
+  sessionDestination?: string;
   parent?: BrowserWindow | null;
   logger?: { warn: (...args: unknown[]) => void };
 }
@@ -24,6 +26,17 @@ const hardenedPartitions = new Set<string>();
 /** workspace 窗口枚举应排除此窗口；应用退出仍需关闭它。 */
 export function isZhiliuCloudWindow(win: BrowserWindow): boolean {
   return cloudWindow === win;
+}
+
+export function hasZhiliuCloudWindow(origin: string): boolean {
+  return cloudOrigin === origin && cloudWindow !== null && !cloudWindow.isDestroyed();
+}
+
+/** 账号退出时销毁远端会话，关闭窗口后清该 origin partition，保留本地项目数据。 */
+export async function clearZhiliuCloudSession(origin: string): Promise<void> {
+  const target = resolveZhiliuCloudTarget(origin);
+  if (cloudOrigin === origin && cloudWindow && !cloudWindow.isDestroyed()) cloudWindow.destroy();
+  await session.fromPartition(target.partition).clearStorageData();
 }
 
 function configureZhiliuCloudSession(partition: string) {
@@ -46,13 +59,28 @@ export async function openZhiliuCloudWindow(
   options: OpenZhiliuCloudWindowOptions,
 ): Promise<BrowserWindow> {
   const target = resolveZhiliuCloudTarget(options.cloudUrl);
-  if (options.entry === "devices") {
-    if (!options.authorizationId || !/^[a-f0-9-]{36}$/iu.test(options.authorizationId)) throw new Error("Invalid device authorization");
+  if (options.sessionTicket) {
+    if (!/^[A-Za-z0-9_-]{32,128}$/u.test(options.sessionTicket))
+      throw new Error("Invalid account ticket");
+    const destination = options.sessionDestination ?? "/agent";
+    if (
+      destination !== "/agent" &&
+      destination !== "/feedback" &&
+      !/^\/settings\/devices\?connect=[a-f0-9-]{36}$/iu.test(destination)
+    )
+      throw new Error("Invalid account destination");
+    const loginUrl = new URL(target.url);
+    loginUrl.hash = `/desktop-session?${new URLSearchParams({ ticket: options.sessionTicket, next: destination })}`;
+    target.url = loginUrl.href;
+  }
+  if (!options.sessionTicket && options.entry === "devices") {
+    if (!options.authorizationId || !/^[a-f0-9-]{36}$/iu.test(options.authorizationId))
+      throw new Error("Invalid device authorization");
     const deviceUrl = new URL(target.url);
     deviceUrl.hash = `/settings/devices?connect=${options.authorizationId}`;
     target.url = deviceUrl.href;
   }
-  if (options.entry === "feedback") {
+  if (!options.sessionTicket && options.entry === "feedback") {
     const feedbackUrl = new URL(target.url);
     const query = new URLSearchParams({ source: "desktop" });
     if (options.appVersion && /^[\w.+-]{1,64}$/u.test(options.appVersion)) {
@@ -64,7 +92,7 @@ export async function openZhiliuCloudWindow(
   if (cloudWindow && !cloudWindow.isDestroyed()) {
     if (cloudOrigin === target.origin) {
       // 只有明确反馈动作才改 hash；普通云入口仍只聚焦，避免重载登录与草稿。
-      if (options.entry === "feedback" || options.entry === "devices") {
+      if (options.sessionTicket || options.entry === "feedback" || options.entry === "devices") {
         try {
           await cloudWindow.loadURL(target.url);
         } catch {

@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { useOpenZhiliuCloud } from "@/hooks/useOpenZhiliuCloud.js";
 import { ApplicationBrandMark } from "@/components/ui/ApplicationBrandMark.js";
+import { ZhiliuAccountControls } from "./ZhiliuAccountControls.js";
 
 /** 导航条占用正常布局；云账号保留在独立工作台，不读取本地 OAuth 凭据。 */
 export function ZhiliuWorkspaceSwitcher({ onOpenLocal }: { onOpenLocal: () => void }) {
@@ -58,10 +59,9 @@ export function ZhiliuWorkspaceSwitcher({ onOpenLocal }: { onOpenLocal: () => vo
         {chinese ? "连接电脑" : "Connect computer"}
       </Button>
       <span className="hidden min-w-0 truncate text-ui-caption text-foreground-subtle lg:block">
-        {chinese
-          ? "登录织流 · 模型由平台统一管理"
-          : "Sign in to Zhiliu · Models managed by your platform"}
+        {chinese ? "模型由平台统一管理" : "Models managed by your platform"}
       </span>
+      <ZhiliuAccountControls />
       {failed && (
         <span role="alert" className="min-w-0 truncate text-ui-caption text-destructive">
           {connectionFailed

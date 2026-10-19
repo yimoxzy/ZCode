@@ -6,7 +6,8 @@
 ## 已实现
 
 - 明确的「云 Agent / 本地项目」入口；用户只登录织流，模型与上游 Key 由平台统一管理。
-- 云工作台复用现有 SaaS 网页、登录和空间权限，云调用仍走既有积分计费链。
+- 「登录织流」在系统浏览器核对连接码、账号和空间；客户端不输入密码或模型 Key。Main 加密保存独立、可撤销的桌面授权，云调用仍走既有积分计费链。
+- 云工作台复用现有 SaaS 网页和空间权限，通过短期单次票据建立关联桌面授权的网页会话；关闭云窗后可重新授权进入，通常无需再次输入密码。
 - 远端页面使用独立窗口和按服务 origin 隔离的浏览器 partition，无 Node/preload/本机 RPC；系统权限、跨源导航和弹窗默认拒绝，下载由用户选择位置。
 - 本地项目保留现有窗口与 Host 分层、文件/Git 和应用内记录界面；本批不启动 bundled CLI。依赖 CLI 的推理、工具、Skill/MCP 与自动化尚未开放。
 - 独立应用 ID `ai.zhiliu.desktop`、Electron profile 和 `~/.zhiliu-desktop` 数据根，启动设置、存储扫描/清理与全局 CLI 配置探测一并隔离。
@@ -25,7 +26,7 @@
 2. Web 已接通本人同空间电脑的授权、真实在线状态和云 Agent 文件任务；本机每次原生审批，结果预览后发送。完整 ZCode 本地历史、独立本地 Agent 会话和跨端追加指令仍未接通；不能把文件 ToolRequest 当终端命令承载本地聊天。
 3. 新增窄设备授权、签名心跳、受控文件读写和加密 journal/outbox。Web 不能代替本机审批，云窗口仍无 preload/Node/通用本地桥；文件连接通过已有窗口 Host 的 Main 独占 MessagePort。详见 [本机权限审计](sandbox-and-control-audit.md)。
 4. 开源 Computer Use producer 为占位实现；不能宣称已有完整电脑控制或操作系统沙箱。
-5. 云登录使用 SaaS 当前 sessionStorage，关闭窗口后需要重新登录；本版不复制登录 Token 到本地 Host。
+5. 桌面账号由 Main 的系统安全存储恢复，并通过服务端实时检查后使用；普通状态显示缓存至多60秒。云窗仍使用独立网页会话，关闭后重开由 Main 向服务端申请单次进入票据，不把桌面登录 Token 交给云窗或 Host。授权过期、撤销或成员失效后需重新在浏览器批准。
 6. 应用图标、启动标识、菜单及窗口品牌已统一为织流，保留第三方供应商图标与开源署名。工作台布局沿用上游结构；平台首次使用引导和无障碍细节后续迭代。
 7. 当前构建和安装验证目标是 Windows x64，macOS/Linux 尚未做整包验收；远端 SSH/WSL/Docker 所需跨平台运行时不在本轮包中验证。
 8. 云端录音/屏幕共享等浏览器系统权限当前关闭；附件上传不受这一限制。
@@ -43,7 +44,7 @@ pnpm build:zhiliu-desktop -- --os win --arch x64
 仅本机开发可使用 loopback HTTP，通过安全隧道连接服务器。不要将运维私钥、密码、上游 Key 打入客户端。
 本机测试安装包使用 `http://127.0.0.1:18780`，需要独立安全隧道；分发给客户前必须用正式 HTTPS 服务地址重建。
 `ZHILIU_CLOUD_URL` 可由可信本机启动环境覆盖；不接受云网页提供任意服务地址。
-成功打包后的预期产物为 `packages/desktop/dist/织流-3.15.2-win-x64.exe`；独立 appId 用于与 ZCode 并存，仍需对该产物实际安装验收。
+当前3.15.3版本成功打包后的预期产物为 `packages/desktop/dist/织流-3.15.3-win-x64.exe`；独立 appId 用于与 ZCode 并存。构建、安装及部署是否已验收，以[账号授权发布记录](releases/2026-10-19-account-authorization.md)为准。
 
 ## 验证入口
 
@@ -51,7 +52,7 @@ pnpm build:zhiliu-desktop -- --os win --arch x64
 pnpm typecheck
 pnpm lint
 pnpm architecture:check --changed
-pnpm exec vitest run test/zhiliu
+pnpm exec vitest run packages/desktop/test/zhiliuAccountAuthorization.test.ts packages/desktop/test/zhiliuAccountAuth.test.ts packages/desktop/test/zhiliuCloudWindow.test.ts packages/desktop/test/zhiliuComputerConnection.test.ts
 node packages/desktop/scripts/zhiliu-cloud-window-smoke.mjs
 node packages/desktop/scripts/zhiliu-desktop-edition-smoke.mjs
 ```
@@ -71,8 +72,11 @@ node packages/desktop/scripts/zhiliu-installed-smoke.mjs
 
 初版安装产物与验收：[2026-10-19 平台授权桌面技术版](releases/2026-10-19-managed-preview.md)。后续品牌、反馈与更新验收以对应批次发布记录为准。
 品牌批次：[2026-10-19 品牌、反馈与更新接入](releases/2026-10-19-branding-feedback.md)。
-本批产物：[2026-10-19 电脑连接与文件任务](releases/2026-10-19-computer-connection.md)。
+电脑连接批次：[2026-10-19 电脑连接与文件任务](releases/2026-10-19-computer-connection.md)。
+账号授权批次：[2026-10-19 系统浏览器授权与退出](releases/2026-10-19-account-authorization.md)。
 
-关联设计：[产品边界](../../specs/zhiliu-desktop-edition.md)、[官方服务隔离](official-cloud-isolation.md)。
+关联设计：[产品边界](../../specs/zhiliu-desktop-edition.md)、[浏览器账号授权](../../specs/zhiliu-account-authorization.md)、[官方服务隔离](official-cloud-isolation.md)。
 
-电脑连接入口在本地工作模式栏的「连接电脑」，也在原生「电脑连接」菜单及托盘。核对设备码并在云网页确认账号/空间后，使用系统选择器授权一个工作目录；重启后需重新选择目录。网页设置→桌面设备显示连接，聊天输入区可选择在线电脑。终端、键鼠控制、本地模型和本地会话共享仍未开放。
+先在工作模式栏「登录织流」，由系统浏览器批准账号；账号登录不会开放目录或让电脑上线。「连接电脑」位于同一栏，也在原生菜单及托盘；核对独立文件连接码、确认账号/空间后，使用系统选择器授权一个工作目录，重启后需重新选择。网页设置→桌面设备显示连接，聊天输入区可选择在线电脑。终端、键鼠控制、本地模型和本地会话共享仍未开放。
+
+「退出登录」先显示默认取消的提醒，说明网页将无法操作这台电脑、本机待确认操作会取消、云端任务可能继续。确认后停止文件连接、删除本机账号与 Host 凭据、撤销云端桌面授权及其会话，并清理隔离云窗；离线也清本机，未确认的远端撤销会明确提示去网页撤销设备。

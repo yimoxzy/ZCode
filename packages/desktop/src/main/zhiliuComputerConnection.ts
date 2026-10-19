@@ -21,6 +21,14 @@ export interface ZhiliuComputerConnectionOptions {
   cloudUrl: () => string | undefined;
   resolveHost: () => UtilityProcess | null;
   iconPath?: string;
+  getDeviceIdentity?: () => Promise<{
+    privateKey: string;
+    publicKey: string;
+    userId: string;
+    spaceId: string;
+    deviceId: string;
+  } | null>;
+  openAuthorization?: (authorizationId: string) => Promise<void>;
 }
 /** Main 不保存工具队列或执行状态；只调度现有 Host、系统凭据和原生审批。 */
 export function createZhiliuComputerConnection(options: ZhiliuComputerConnectionOptions) {
@@ -59,19 +67,51 @@ export function createZhiliuComputerConnection(options: ZhiliuComputerConnection
     const epoch = generation;
     try {
       const target = resolveZhiliuCloudTarget(options.cloudUrl());
+      const identity = await options.getDeviceIdentity?.();
+      if (generation !== epoch) return;
+      if (options.getDeviceIdentity && !identity) throw new Error("请先登录织流账号");
       let record: StoredZhiliuHost | null = await withCredentials((value) =>
         value.read(target.origin),
       );
       if (generation !== epoch) return;
+      if (
+        record &&
+        identity &&
+        (record.privateKey !== identity.privateKey ||
+          record.credential.user_id !== identity.userId ||
+          record.credential.space_id !== identity.spaceId ||
+          record.credential.device_id !== identity.deviceId)
+      ) {
+        // 旧版本文件桥有独立设备密钥；不能把它带入新账号授权后的当前设备。
+        const previous = record;
+        await withCredentials((value) => value.remove(target.origin));
+        await fetch(
+          `${target.origin}/api/desktop-host/devices/${previous.credential.device_id}/disconnect`,
+          {
+            method: "POST",
+            redirect: "error",
+            headers: { Authorization: `Bearer ${previous.credential.host_token}` },
+            signal: AbortSignal.timeout(5000),
+          },
+        ).catch(() => {});
+        record = null;
+      }
+      if (generation !== epoch) return;
       if (!record) {
-        const pending = await beginZhiliuHostAuthorization(target.origin);
+        const pending = await beginZhiliuHostAuthorization(
+          target.origin,
+          fetch,
+          identity ?? undefined,
+        );
         if (generation !== epoch) return;
-        await openZhiliuCloudWindow({
-          cloudUrl: options.cloudUrl(),
-          iconPath: options.iconPath,
-          entry: "devices",
-          authorizationId: pending.authorizationId,
-        });
+        if (options.openAuthorization) await options.openAuthorization(pending.authorizationId);
+        else
+          await openZhiliuCloudWindow({
+            cloudUrl: options.cloudUrl(),
+            iconPath: options.iconPath,
+            entry: "devices",
+            authorizationId: pending.authorizationId,
+          });
         void dialog.showMessageBox({
           type: "info",
           title: "连接织流账号",
@@ -87,6 +127,14 @@ export function createZhiliuComputerConnection(options: ZhiliuComputerConnection
           await new Promise((resolve) => setTimeout(resolve, 3000));
         }
         if (!record || generation !== epoch) return;
+        if (
+          identity &&
+          (record.privateKey !== identity.privateKey ||
+            record.credential.user_id !== identity.userId ||
+            record.credential.space_id !== identity.spaceId ||
+            record.credential.device_id !== identity.deviceId)
+        )
+          throw new Error("电脑授权与登录身份不匹配");
         const authorizedRecord = record;
         await withCredentials(async (value) => {
           if (generation === epoch) await value.write(authorizedRecord);

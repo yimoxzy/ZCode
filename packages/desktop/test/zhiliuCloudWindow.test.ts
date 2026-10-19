@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BrowserWindow, session } from "electron";
-import { openZhiliuCloudWindow } from "../src/main/zhiliuCloudWindow.js";
+import {
+  clearZhiliuCloudSession,
+  hasZhiliuCloudWindow,
+  openZhiliuCloudWindow,
+} from "../src/main/zhiliuCloudWindow.js";
 
 const harness = vi.hoisted(() => ({ failNextLoad: false }));
 
@@ -11,6 +15,7 @@ vi.mock("electron", async () => {
     setPermissionCheckHandler: vi.fn(),
     setDevicePermissionHandler: vi.fn(),
     setDisplayMediaRequestHandler: vi.fn(),
+    clearStorageData: vi.fn(async () => undefined),
   });
   class FakeWindow extends EventEmitter {
     static instances: FakeWindow[] = [];
@@ -63,6 +68,27 @@ afterEach(() => {
 });
 
 describe("织流云窗口生命周期与事件边界", () => {
+  it("单次ticket只送固定同源入口；账号退出销毁云窗并清隔离存储", async () => {
+    const origin = "https://account.example.com";
+    const ticket = "a".repeat(64);
+    const win = await openZhiliuCloudWindow({ cloudUrl: origin, sessionTicket: ticket });
+    expect(win.loadURL).toHaveBeenCalledWith(
+      `${origin}/#/desktop-session?ticket=${ticket}&next=%2Fagent`,
+    );
+    expect(hasZhiliuCloudWindow(origin)).toBe(true);
+    expect((win as FakeWindow).options.webPreferences).not.toHaveProperty("preload");
+    await clearZhiliuCloudSession(origin);
+    expect(win.isDestroyed()).toBe(true);
+    expect(hasZhiliuCloudWindow(origin)).toBe(false);
+    expect(fakeSession().clearStorageData).toHaveBeenCalledOnce();
+    await expect(
+      openZhiliuCloudWindow({
+        cloudUrl: origin,
+        sessionTicket: ticket,
+        sessionDestination: "https://evil.test",
+      }),
+    ).rejects.toThrow("Invalid account destination");
+  });
   it("云窗口没有本地权限，登录和数据不通过主 React renderer", async () => {
     const win = await openZhiliuCloudWindow({
       cloudUrl: "https://one.example.com",

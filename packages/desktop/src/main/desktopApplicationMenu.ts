@@ -1,4 +1,5 @@
 import { app, BrowserWindow, Menu } from "electron";
+import { buildZhiliuAccountMenu } from "./zhiliuAccountMenu.js";
 import {
   DesktopCommandIds,
   desktopMenuMessageIds,
@@ -118,6 +119,7 @@ function buildApplicationMenuTemplate(options: {
   return [
     ...(options.zhiliuComputerActions
       ? [
+          buildZhiliuAccountMenu(options.executeDesktopCommand),
           {
             label: "电脑连接",
             submenu: [

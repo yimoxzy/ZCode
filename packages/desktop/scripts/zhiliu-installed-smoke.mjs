@@ -84,83 +84,99 @@ try {
     await local.screenshot({ path: `${process.env.ZHILIU_SMOKE_SCREENSHOT}.dark.png` });
     await local.emulateMedia({ colorScheme: "light" });
   }
-  const [cloud] = await Promise.all([
-    context.waitForEvent("page", { timeout: 30_000 }),
-    local.getByTestId("zhiliu-open-cloud").click(),
-  ]);
-  const checks = [
-    "installed startup without Main Inspector",
-    "platform login entry",
-    "visible computer connection entry",
-    "no personal model/key form",
-    "Zhiliu title and loaded platform brand marks",
-  ];
-  let readiness;
-  if (live) {
-    try {
-      await cloud.locator('input[type="password"]').waitFor({ timeout: 60_000 });
-    } catch (error) {
-      if (process.env.ZHILIU_SMOKE_SCREENSHOT && !cloud.isClosed()) {
-        await cloud.screenshot({ path: `${process.env.ZHILIU_SMOKE_SCREENSHOT}.failure.png` });
-      }
-      process.stderr.write(
-        `${JSON.stringify({
-          stage: "SaaS sign-in",
-          closed: cloud.isClosed(),
-          title: cloud.isClosed() ? null : await cloud.title(),
-          fields: cloud.isClosed() ? null : await cloud.locator("input").count(),
-        })}\n`,
-      );
-      throw error;
-    }
-    readiness = await cloud.evaluate(() => fetch("/api/ready").then((response) => response.json()));
-    assert.equal(readiness.status, "ready");
-    assert.equal(readiness.worker, "ready");
-    checks.push("real SaaS login form", "API and worker ready");
-    await local.getByTestId("zhiliu-open-feedback").click();
-    await cloud.waitForURL((url) => url.hash.startsWith("#/feedback?"));
-    assert.match(cloud.url(), /source=desktop&app_version=/u);
-    await cloud.locator('input[type="password"]').waitFor();
-    checks.push("real feedback route requires platform sign-in");
+  if (process.env.ZHILIU_SMOKE_ACCOUNT_ENTRY_ONLY === "1") {
+    await local.getByRole("button", { name: "登录织流", exact: true }).waitFor();
+    assert.equal(await local.getByRole("button", { name: "退出登录", exact: true }).count(), 0);
+    const readiness = live
+      ? await fetch(`${target.origin}/api/ready`, { signal: AbortSignal.timeout(12000) }).then(
+          (response) => response.json(),
+        )
+      : null;
+    if (live) assert.equal(readiness?.status, "ready");
+    process.stdout.write(
+      `${JSON.stringify({ passed: true, live, checks: ["installed startup without Main Inspector", "browser account sign-in entry", "visible computer connection entry", "no personal model/key/password form", "Zhiliu brand marks", "SaaS ready"], schema: readiness?.schema.current })}\n`,
+    );
   } else {
-    await cloud.getByRole("heading", { name: "织流安装验收" }).waitFor();
-    await cloud.getByRole("textbox", { name: "draft" }).fill("saved draft");
-    await local.getByTestId("zhiliu-open-cloud").click();
-    assert.equal(context.pages().length, 2);
-    assert.equal(await cloud.getByRole("textbox", { name: "draft" }).inputValue(), "saved draft");
-    checks.push("singleton keeps draft");
-    await local.getByTestId("zhiliu-open-feedback").click();
-    await cloud.waitForURL((url) => url.hash.startsWith("#/feedback?"));
-    assert.match(cloud.url(), /source=desktop&app_version=/u);
-    assert.equal(await cloud.getByRole("textbox", { name: "draft" }).inputValue(), "saved draft");
-    checks.push("own feedback entry preserves the cloud session and draft");
+    const [cloud] = await Promise.all([
+      context.waitForEvent("page", { timeout: 30_000 }),
+      local.getByTestId("zhiliu-open-cloud").click(),
+    ]);
+    const checks = [
+      "installed startup without Main Inspector",
+      "platform login entry",
+      "visible computer connection entry",
+      "no personal model/key form",
+      "Zhiliu title and loaded platform brand marks",
+    ];
+    let readiness;
+    if (live) {
+      try {
+        await cloud.locator('input[type="password"]').waitFor({ timeout: 60_000 });
+      } catch (error) {
+        if (process.env.ZHILIU_SMOKE_SCREENSHOT && !cloud.isClosed()) {
+          await cloud.screenshot({ path: `${process.env.ZHILIU_SMOKE_SCREENSHOT}.failure.png` });
+        }
+        process.stderr.write(
+          `${JSON.stringify({
+            stage: "SaaS sign-in",
+            closed: cloud.isClosed(),
+            title: cloud.isClosed() ? null : await cloud.title(),
+            fields: cloud.isClosed() ? null : await cloud.locator("input").count(),
+          })}\n`,
+        );
+        throw error;
+      }
+      readiness = await cloud.evaluate(() =>
+        fetch("/api/ready").then((response) => response.json()),
+      );
+      assert.equal(readiness.status, "ready");
+      assert.equal(readiness.worker, "ready");
+      checks.push("real SaaS login form", "API and worker ready");
+      await local.getByTestId("zhiliu-open-feedback").click();
+      await cloud.waitForURL((url) => url.hash.startsWith("#/feedback?"));
+      assert.match(cloud.url(), /source=desktop&app_version=/u);
+      await cloud.locator('input[type="password"]').waitFor();
+      checks.push("real feedback route requires platform sign-in");
+    } else {
+      await cloud.getByRole("heading", { name: "织流安装验收" }).waitFor();
+      await cloud.getByRole("textbox", { name: "draft" }).fill("saved draft");
+      await local.getByTestId("zhiliu-open-cloud").click();
+      assert.equal(context.pages().length, 2);
+      assert.equal(await cloud.getByRole("textbox", { name: "draft" }).inputValue(), "saved draft");
+      checks.push("singleton keeps draft");
+      await local.getByTestId("zhiliu-open-feedback").click();
+      await cloud.waitForURL((url) => url.hash.startsWith("#/feedback?"));
+      assert.match(cloud.url(), /source=desktop&app_version=/u);
+      assert.equal(await cloud.getByRole("textbox", { name: "draft" }).inputValue(), "saved draft");
+      checks.push("own feedback entry preserves the cloud session and draft");
+    }
+    assert.equal(new URL(cloud.url()).origin, target.origin);
+    assert.deepEqual(
+      await cloud.evaluate(() => ({
+        zcode: typeof window.zcode,
+        desktop: typeof window.desktop,
+        node: typeof window.require,
+      })),
+      { zcode: "undefined", desktop: "undefined", node: "undefined" },
+    );
+    checks.push("SaaS window has no native bridge");
+    if (process.env.ZHILIU_SMOKE_SCREENSHOT) {
+      await (live ? cloud : local).screenshot({ path: process.env.ZHILIU_SMOKE_SCREENSHOT });
+    }
+    await cloud.close();
+    assert.equal(local.isClosed(), false);
+    await local.getByTestId("zhiliu-workspace-switcher").waitFor();
+    checks.push("closing cloud preserves local window");
+    process.stdout.write(
+      `${JSON.stringify({
+        passed: true,
+        live,
+        checks,
+        version: readiness?.version,
+        schema: readiness?.schema.current,
+      })}\n`,
+    );
   }
-  assert.equal(new URL(cloud.url()).origin, target.origin);
-  assert.deepEqual(
-    await cloud.evaluate(() => ({
-      zcode: typeof window.zcode,
-      desktop: typeof window.desktop,
-      node: typeof window.require,
-    })),
-    { zcode: "undefined", desktop: "undefined", node: "undefined" },
-  );
-  checks.push("SaaS window has no native bridge");
-  if (process.env.ZHILIU_SMOKE_SCREENSHOT) {
-    await (live ? cloud : local).screenshot({ path: process.env.ZHILIU_SMOKE_SCREENSHOT });
-  }
-  await cloud.close();
-  assert.equal(local.isClosed(), false);
-  await local.getByTestId("zhiliu-workspace-switcher").waitFor();
-  checks.push("closing cloud preserves local window");
-  process.stdout.write(
-    `${JSON.stringify({
-      passed: true,
-      live,
-      checks,
-      version: readiness?.version,
-      schema: readiness?.schema.current,
-    })}\n`,
-  );
 } finally {
   await browser?.close().catch(() => {});
   // 仅终止本测试亲自启动的独立 profile 进程树，不搜索/关闭用户其他窗口。

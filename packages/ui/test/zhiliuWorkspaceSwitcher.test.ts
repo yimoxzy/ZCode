@@ -12,6 +12,7 @@ const state = vi.hoisted(() => ({
 vi.mock("@/hooks/usePlatform.js", () => ({ usePlatform: () => state }));
 vi.mock("@/i18n/IntlProvider.js", () => ({ useZCodeIntl: () => ({ locale: state.locale }) }));
 vi.mock("@/logger.js", () => ({ logger: { warn: vi.fn() } }));
+vi.mock("@/root/ZhiliuAccountControls.js", () => ({ ZhiliuAccountControls: () => null }));
 
 beforeEach(() => {
   state.locale = "zh-CN";
@@ -30,7 +31,7 @@ describe("织流工作台入口", () => {
       ),
     );
     expect(onOpenLocal).not.toHaveBeenCalled();
-    expect(screen.getByText("登录织流 · 模型由平台统一管理")).toBeTruthy();
+    expect(screen.getByText("模型由平台统一管理")).toBeTruthy();
   });
 
   it("本地入口复用工作区打开动作", () => {

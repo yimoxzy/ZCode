@@ -42,6 +42,7 @@ import {
   net,
   protocol,
   session,
+  shell,
   webContents,
 } from "electron";
 import type { UtilityProcess as ElectronUtilityProcess } from "electron";
@@ -135,8 +136,14 @@ import { createWebRemoteControlFeatureGate } from "./webRemoteControlFeatureGate
 import { reconnectWebRemoteControlWorkspaceInRenderer } from "./webRemoteControlRendererReconnect.js";
 import { sendWebRemoteControlStatusChangedToWindow } from "./webRemoteControlStatusEvents.js";
 import { executeDesktopCommand } from "./desktopCommandHandlers.js";
-import { openZhiliuCloudWindow, isZhiliuCloudWindow } from "./zhiliuCloudWindow.js";
+import {
+  openZhiliuCloudWindow,
+  isZhiliuCloudWindow,
+  hasZhiliuCloudWindow,
+  clearZhiliuCloudSession,
+} from "./zhiliuCloudWindow.js";
 import { createZhiliuComputerConnection } from "./zhiliuComputerConnection.js";
+import { createZhiliuAccountAuth } from "./zhiliuAccountAuth.js";
 import { resolveBootstrapSettingsFile } from "./desktopDataBaseDirBootstrap.js";
 import { clampDesktopZoomLevel, resolveDesktopZoomLevelFromFactor } from "./desktopZoom.js";
 import {
@@ -666,11 +673,55 @@ const windowWorkspaceMap = new Map<number, Set<string>>();
 const windowTaskRealtimeHostIdMap = new Map<number, string>();
 const windowUnreadCountMap = new Map<number, number>();
 const windowHostProcessMap = new Map<number, ElectronUtilityProcess>();
-const zhiliuComputerConnection = ZHILIU_DESKTOP_ENABLED ? createZhiliuComputerConnection({
-  cloudUrl: () => process.env.ZHILIU_CLOUD_URL?.trim() || ZHILIU_CLOUD_URL,
-  resolveHost: () => windowHostProcessMap.values().next().value ?? null,
-  iconPath,
-}) : undefined;
+const zhiliuComputerConnection: ReturnType<typeof createZhiliuComputerConnection> | undefined =
+  ZHILIU_DESKTOP_ENABLED
+    ? createZhiliuComputerConnection({
+        cloudUrl: () => process.env.ZHILIU_CLOUD_URL?.trim() || ZHILIU_CLOUD_URL,
+        resolveHost: () => windowHostProcessMap.values().next().value ?? null,
+        iconPath,
+        getDeviceIdentity: async () => {
+          if (!zhiliuAccountAuth) return null;
+          if (["logged_out", "authorizing"].includes((await zhiliuAccountAuth.getStatus()).phase)) {
+            if ((await zhiliuAccountAuth.login()).phase !== "authenticated") return null;
+          }
+          return zhiliuAccountAuth.getDeviceIdentity();
+        },
+        openAuthorization: async (authorizationId) => {
+          const opened = await zhiliuAccountAuth?.authorizeCloud(async (ticket, origin) => {
+            await openZhiliuCloudWindow({
+              cloudUrl: origin,
+              iconPath,
+              // 已登录云窗只做站内跳转；重复 bootstrap 的路由替换可能中止 loadURL。
+              ...(hasZhiliuCloudWindow(origin)
+                ? { entry: "devices" as const, authorizationId }
+                : { sessionTicket: ticket, sessionDestination: `/settings/devices?connect=${authorizationId}` }),
+              logger,
+            });
+          });
+          if (!opened) throw new Error("请先完成织流账号授权");
+        },
+      })
+    : undefined;
+const zhiliuAccountAuth: ReturnType<typeof createZhiliuAccountAuth> | undefined =
+  ZHILIU_DESKTOP_ENABLED
+    ? createZhiliuAccountAuth({
+        cloudUrl: () => process.env.ZHILIU_CLOUD_URL?.trim() || ZHILIU_CLOUD_URL,
+        openExternal: (url) => shell.openExternal(url),
+        pauseComputer: () => zhiliuComputerConnection?.pause(),
+        disconnectComputer: async () => {
+          await zhiliuComputerConnection?.disconnect();
+        },
+        clearCloudSession: clearZhiliuCloudSession,
+        openCloudSession: async (ticket, origin) => {
+          await openZhiliuCloudWindow({
+            cloudUrl: origin,
+            iconPath,
+            sessionTicket: ticket,
+            logger,
+          });
+        },
+      })
+    : undefined;
 const cuaPipFocusRouter = createCuaPipFocusRouter({
   send: (windowId, event) => {
     windowHostProcessMap.get(windowId)?.postMessage({
@@ -1513,6 +1564,16 @@ async function executeDesktopCommandForApp(
   command: Parameters<typeof executeDesktopCommand>[0]["command"],
   senderWindow?: BrowserWindow | null,
 ) {
+  if (command === DesktopCommandIds.GetZhiliuAccount) return zhiliuAccountAuth?.getStatus();
+  if (command === DesktopCommandIds.CancelZhiliuLogin) {
+    zhiliuAccountAuth?.cancelLogin();
+    return zhiliuAccountAuth?.status();
+  }
+  if (command === DesktopCommandIds.LogoutZhiliu) return zhiliuAccountAuth?.logout();
+  if (command === DesktopCommandIds.LoginZhiliu) {
+    if (!zhiliuAccountAuth) throw new Error("Zhiliu is not enabled in this build");
+    return zhiliuAccountAuth.login();
+  }
   if (command === DesktopCommandIds.ConnectZhiliuComputer) {
     if (!zhiliuComputerConnection) throw new Error("Zhiliu is not enabled in this build");
     await zhiliuComputerConnection.connect();
@@ -1524,15 +1585,31 @@ async function executeDesktopCommandForApp(
   ) {
     if (!ZHILIU_DESKTOP_ENABLED) throw new Error("Zhiliu is not enabled in this build");
     try {
-      await openZhiliuCloudWindow({
-        cloudUrl: process.env.ZHILIU_CLOUD_URL?.trim() || ZHILIU_CLOUD_URL,
-        iconPath,
-        ...(command === DesktopCommandIds.OpenFeedback
-          ? { entry: "feedback" as const, appVersion: ZCODE_VERSION }
-          : {}),
-        logger,
-      });
-      return { opened: true };
+      if (!zhiliuAccountAuth) throw new Error("Account authorization unavailable");
+      let status = await zhiliuAccountAuth.getStatus();
+      if (status.phase === "logged_out" || status.phase === "authorizing")
+        status = await zhiliuAccountAuth.login();
+      if (status.phase !== "authenticated") return { opened: false };
+      // 聚焦已有窗口也经账号所有者的同一代次/队列，避免退出后迟到的聚焦重开云窗。
+      return {
+        opened: await zhiliuAccountAuth.authorizeCloud(async (ticket, origin) => {
+          const existing = hasZhiliuCloudWindow(origin);
+          await openZhiliuCloudWindow({
+            cloudUrl: origin,
+            iconPath,
+            logger,
+            ...(!existing
+              ? {
+                  sessionTicket: ticket,
+                  sessionDestination:
+                    command === DesktopCommandIds.OpenFeedback ? "/feedback" : "/agent",
+                }
+              : command === DesktopCommandIds.OpenFeedback
+                ? { entry: "feedback" as const, appVersion: ZCODE_VERSION }
+                : {}),
+          });
+        }),
+      };
     } catch {
       // loadURL 原始异常可能含登录参数，入口仅展示固定错误。
       await dialog.showMessageBox({
@@ -2338,10 +2415,9 @@ app.whenReady().then(async () => {
   // 不向 Preview 渠道提供更新。构建期未启用自动更新时同样不更新
   // （见 docs/desktop/build-time-optional-capabilities.md）。
   void initAutoUpdater({
-    enabled:
-      ZHILIU_DESKTOP_ENABLED
-        ? getZhiliuAutoUpdaterInitOptions().enabled
-        : ZCODE_PRODUCT_FLAVOR === "production" && ZCODE_AUTO_UPDATE_ENABLED,
+    enabled: ZHILIU_DESKTOP_ENABLED
+      ? getZhiliuAutoUpdaterInitOptions().enabled
+      : ZCODE_PRODUCT_FLAVOR === "production" && ZCODE_AUTO_UPDATE_ENABLED,
     onBeforeQuitAndInstall: async () => {
       notifyStabilityLifecycle("update_install");
       await prepareAppQuit("auto-update quitAndInstall", "update-install");

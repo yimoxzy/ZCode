@@ -1,4 +1,11 @@
-import { createHash, generateKeyPairSync, randomBytes, sign } from "node:crypto";
+import {
+  createHash,
+  createPrivateKey,
+  createPublicKey,
+  generateKeyPairSync,
+  randomBytes,
+  sign,
+} from "node:crypto";
 import { constants } from "node:fs";
 import * as fs from "node:fs/promises";
 import { join } from "node:path";
@@ -79,8 +86,22 @@ export class ZhiliuHostStore {
   }
 }
 
-export async function beginZhiliuHostAuthorization(origin: string, http: typeof fetch = fetch) {
-  const pair = generateKeyPairSync("ed25519");
+export async function beginZhiliuHostAuthorization(
+  origin: string,
+  http: typeof fetch = fetch,
+  identity?: { privateKey: string; publicKey: string },
+) {
+  const pair = identity
+    ? {
+        privateKey: createPrivateKey(identity.privateKey),
+        publicKey: createPublicKey(identity.privateKey),
+      }
+    : generateKeyPairSync("ed25519");
+  if (
+    identity &&
+    pair.publicKey.export({ type: "spki", format: "pem" }).toString() !== identity.publicKey
+  )
+    throw new Error("设备身份不匹配");
   const privateKey = pair.privateKey.export({ type: "pkcs8", format: "pem" }).toString();
   const verifier = randomBytes(32).toString("base64url");
   const response = await http(`${origin}/api/desktop-host/authorizations`, {

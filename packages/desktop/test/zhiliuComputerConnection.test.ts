@@ -101,6 +101,62 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("织流 Main 电脑连接凭据代次", () => {
+  it("未登录时不申请目录工具授权，也不打开目录选择器", async () => {
+    const connection = createZhiliuComputerConnection({
+      cloudUrl: () => origin,
+      resolveHost: () => null,
+      getDeviceIdentity: async () => null,
+    });
+    await connection.connect();
+    expect(harness.begin).not.toHaveBeenCalled();
+    expect(dialog.showOpenDialog).not.toHaveBeenCalled();
+    expect(harness.write).not.toHaveBeenCalled();
+  });
+
+  it("换入账号设备密钥后先清旧Host授权，复用账号身份重新核码", async () => {
+    harness.stored = record("previous-host-token");
+    const accepted = { ...record(), privateKey: "current-account-device-key" };
+    const identity = {
+      privateKey: accepted.privateKey,
+      publicKey: "current-account-public-key",
+      userId: accepted.credential.user_id,
+      spaceId: accepted.credential.space_id,
+      deviceId: accepted.credential.device_id,
+    };
+    const openAuthorization = vi.fn(async () => undefined);
+    harness.exchange.mockResolvedValue(accepted);
+    const connection = createZhiliuComputerConnection({
+      cloudUrl: () => origin,
+      resolveHost: () => null,
+      getDeviceIdentity: async () => identity,
+      openAuthorization,
+    });
+    await connection.connect();
+    expect(harness.remove).toHaveBeenCalledWith(origin);
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(harness.begin).toHaveBeenCalledWith(origin, fetch, identity);
+    expect(openAuthorization).toHaveBeenCalledOnce();
+    expect(harness.openCloud).not.toHaveBeenCalled();
+    expect(harness.stored?.privateKey).toBe(identity.privateKey);
+  });
+
+  it("授权返回另一个账号或空间时不保存Host凭据", async () => {
+    const expected = record();
+    const connection = createZhiliuComputerConnection({
+      cloudUrl: () => origin,
+      resolveHost: () => null,
+      getDeviceIdentity: async () => ({
+        privateKey: expected.privateKey,
+        publicKey: "account-public-key",
+        userId: "another-user",
+        spaceId: expected.credential.space_id,
+        deviceId: expected.credential.device_id,
+      }),
+    });
+    await connection.connect();
+    expect(harness.write).not.toHaveBeenCalled();
+    expect(dialog.showOpenDialog).not.toHaveBeenCalled();
+  });
   it("serializes disconnect after an in-flight save and removes credentials before network revoke", async () => {
     const saving = deferred<void>();
     const saveStarted = deferred<void>();
