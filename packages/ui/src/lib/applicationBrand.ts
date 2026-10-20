@@ -4,4 +4,5 @@ import zhiliuLogoUrl from "@/assets/zhiliu/logo.svg";
 
 export const applicationLogoUrl = ZHILIU_DESKTOP_ENABLED ? zhiliuLogoUrl : upstreamLogoUrl;
 export const applicationName = ZHILIU_DESKTOP_ENABLED ? "织流" : "ZCode";
+export const applicationBrandId = ZHILIU_DESKTOP_ENABLED ? "zhiliu" : "zcode";
 export const applicationAvatarFallback = ZHILIU_DESKTOP_ENABLED ? "织" : "Z";

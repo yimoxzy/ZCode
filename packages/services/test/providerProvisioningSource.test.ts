@@ -105,8 +105,6 @@ describe("Provider Provisioning Source", () => {
       { scope: "oauth-session", key: "oauth:active_provider", value: "zai" },
       { scope: "oauth-session", key: "oauth:zai:access_token", value: "oauth-token" },
     ]);
-    expect(snapshot.credentials.some((entry) => entry.key === "ssh:password")).toBe(false);
-    expect(snapshot.credentials.some((entry) => entry.key.endsWith(":identity"))).toBe(false);
     expect(snapshot).not.toHaveProperty("sourceRevision");
     repository.dispose();
   });

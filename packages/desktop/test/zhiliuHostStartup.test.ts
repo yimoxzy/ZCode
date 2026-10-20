@@ -19,12 +19,17 @@ vi.mock("@zcode/services/storage-startup", async (importOriginal) => ({
   resolveDefaultZCodeAgentCommand: fixture.resolveCommand,
   resolveZCodeAgentSpawnCwd: fixture.resolveCwd,
 }));
-vi.mock("../src/host/storagePreparationProcesses.js", () => ({
+vi.mock("../src/host/database-startup/storagePreparationProcesses.js", () => ({
   prepareHostStorage: fixture.prepareHost,
   prepareSessionStorage: fixture.prepareSession,
 }));
 
-import { createHostDatabaseStartup } from "../src/host/hostDatabaseStartup.js";
+import { createHostDatabaseStartup } from "../src/host/database-startup/hostDatabaseStartup.js";
+import { SourceServerConnectionManager } from "../src/host/sourceServerConnectionManager.js";
+import {
+  connectServerRemote,
+  connectServerRemoteOverDuplex,
+} from "../src/host/serverRemoteConnection.js";
 
 it("starts the cloud-capable Host without invoking CLI config or reporting a prepared session DB", async () => {
   const order: string[] = [];
@@ -57,9 +62,9 @@ it("starts the cloud-capable Host without invoking CLI config or reporting a pre
 });
 
 it("rejects direct CLI storage preparation before command/env resolution", async () => {
-  const actual = await vi.importActual<typeof import("../src/host/storagePreparationProcesses.js")>(
-    "../src/host/storagePreparationProcesses.js",
-  );
+  const actual = await vi.importActual<
+    typeof import("../src/host/database-startup/storagePreparationProcesses.js")
+  >("../src/host/database-startup/storagePreparationProcesses.js");
   await expect(
     actual.prepareSessionStorage({
       cwd: tmpdir(),
@@ -70,4 +75,75 @@ it("rejects direct CLI storage preparation before command/env resolution", async
     }),
   ).rejects.toMatchObject({ code: "zhiliu_desktop_inference_unavailable" });
   expect(fixture.resolveCommand).not.toHaveBeenCalled();
+});
+
+it("rejects Source Server connect and update before admission, transport or release work", async () => {
+  const recordHandshake = vi.fn();
+  const admitConnection = vi.fn();
+  const createAdapter = vi.fn();
+  const connectServer = vi.fn();
+  const resolveRelease = vi.fn();
+  const manager = new SourceServerConnectionManager({
+    directory: { recordHandshake },
+    admitConnection,
+    createAdapter,
+    connectServer,
+    resolveRelease,
+  });
+  const target = { kind: "docker", container: "must-not-deploy" } as const;
+  const profile = {
+    profileId: "blocked-profile",
+    transport: "docker",
+    target,
+    createdAt: 1,
+  } as const;
+  try {
+    await expect(manager.connect({ profile, target, allowInstall: true })).rejects.toMatchObject({
+      code: "zhiliu_desktop_inference_unavailable",
+    });
+    await expect(manager.updateServer({ profile, target, force: true })).rejects.toMatchObject({
+      code: "zhiliu_desktop_inference_unavailable",
+    });
+    expect(await manager.reconnectOnStartup([{ profile, target }])).toEqual([]);
+    expect(admitConnection).not.toHaveBeenCalled();
+    expect(createAdapter).not.toHaveBeenCalled();
+    expect(resolveRelease).not.toHaveBeenCalled();
+    expect(connectServer).not.toHaveBeenCalled();
+    expect(recordHandshake).not.toHaveBeenCalled();
+    expect(manager.listStates()).toEqual([]);
+  } finally {
+    manager.dispose();
+  }
+});
+
+it("rejects direct URL and duplex remote access before credentials, network or membership writes", async () => {
+  const readTarget = vi.fn(() => "https://must-not-connect.invalid");
+  const fetchImpl = vi.fn();
+  const commitMembership = vi.fn();
+  await expect(
+    connectServerRemote(
+      {
+        kind: "server",
+        get url() {
+          return readTarget();
+        },
+      },
+      { fetchImpl, commitMembership },
+    ),
+  ).rejects.toMatchObject({ code: "zhiliu_desktop_inference_unavailable" });
+  const readToken = vi.fn(() => "must-not-read");
+  const createConnection = vi.fn();
+  await expect(
+    connectServerRemoteOverDuplex({
+      get ingressToken() {
+        return readToken();
+      },
+      createConnection,
+    }),
+  ).rejects.toMatchObject({ code: "zhiliu_desktop_inference_unavailable" });
+  expect(readTarget).not.toHaveBeenCalled();
+  expect(fetchImpl).not.toHaveBeenCalled();
+  expect(commitMembership).not.toHaveBeenCalled();
+  expect(readToken).not.toHaveBeenCalled();
+  expect(createConnection).not.toHaveBeenCalled();
 });

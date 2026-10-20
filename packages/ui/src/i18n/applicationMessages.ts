@@ -16,6 +16,7 @@ const APPLICATION_MESSAGE_IDS = new Set([
   "settings.computerUse.disabledToast",
   "conversationShare.permission.linkEditorHint",
   "conversationShare.import.loginRequired",
+  "conversationShare.readonly.unsupportedRows",
   "bots.description",
   "bots.setup.guide.weixin.create.2",
   "bots.setup.guide.weixin.create.3",

@@ -16,6 +16,7 @@ import { createUsageStatsService } from "../src/usage-stats/usageStatsService.js
 import { createOAuthService } from "../src/oauth/oauthService.js";
 import { createAccountProviderConnectionResolver } from "../src/model-provider/accountProviderConnectionResolver.js";
 import { fetchZCodeBuiltinRemoteRelease } from "../src/model-provider/zcodeBuiltinRemoteConfig.js";
+import { HighspeedCardService } from "../src/highspeed/highspeedCardService.js";
 
 const request = vi.fn();
 const apiClient = { request } as unknown as ApiClient;
@@ -24,6 +25,41 @@ const credentialService = { load: vi.fn(), save: vi.fn(), delete: vi.fn() };
 beforeEach(() => vi.clearAllMocks());
 
 describe("织流 Host 官方服务隔离", () => {
+  it("直接加速 RPC 在账号解析和请求前拒绝，不恢复官方卡或使用本地残留凭据", async () => {
+    const draw = vi.fn();
+    const healthy = vi.fn();
+    const resolveInferenceAuth = vi.fn();
+    const resolveCodingPlanSupported = vi.fn();
+    const resolveModelCovered = vi.fn();
+    const service = new HighspeedCardService({
+      transport: { draw, healthy },
+      resolveInferenceAuth,
+      resolveCodingPlanSupported,
+      resolveModelCovered,
+    });
+    await expect(
+      service.prepareTurn({
+        taskId: "legacy-task",
+        providerId: "account:zai-team-coding-plan",
+        model: "glm-5",
+      }),
+    ).rejects.toMatchObject({ code: "zhiliu_official_cloud_disabled" });
+    await expect(service.healthy("legacy-card")).rejects.toMatchObject({
+      code: "zhiliu_official_cloud_disabled",
+    });
+    expect(await service.getSnapshot()).toEqual({ card: null, nextDrawAt: null, drawing: false });
+    expect(await service.invalidateCard("legacy-card")).toBe(false);
+    for (const operation of [
+      draw,
+      healthy,
+      resolveInferenceAuth,
+      resolveCodingPlanSupported,
+      resolveModelCovered,
+    ]) {
+      expect(operation).not.toHaveBeenCalled();
+    }
+  });
+
   it("官方套餐读取返回空目录/disabled，支付明确拒绝，不调用网络或凭据", async () => {
     const service = createCodingPlanSubscriptionService({ apiClient, credentialService });
     expect(await service.getStaticProducts()).toEqual({});
@@ -47,6 +83,8 @@ describe("织流 Host 官方服务隔离", () => {
 
   it("OAuth不枚举、不读旧凭据、不恢复/刷新/启动官方会话", async () => {
     const service = createOAuthService(credentialService, { apiClient });
+    const sessionChanged = vi.fn();
+    const subscription = service.onDidChangeSession(sessionChanged);
     expect(await service.getProviders()).toEqual([]);
     expect(await service.getActiveProvider()).toBeNull();
     expect(await service.restoreCachedSessionState()).toEqual({ status: "signed-out" });
@@ -63,6 +101,15 @@ describe("织流 Host 官方服务隔离", () => {
       code: "zhiliu_official_cloud_disabled",
     });
     await service.logoutAll();
+    await service.logout();
+    await expect(
+      service.logoutIfCurrentCredentialRequest(
+        "https://platform.example/api/biz/customerInfo",
+        new Headers({ Authorization: "Bearer dl_example" }),
+      ),
+    ).resolves.toBe(false);
+    expect(sessionChanged).not.toHaveBeenCalled();
+    subscription.dispose();
     expect(credentialService.load).not.toHaveBeenCalled();
     expect(credentialService.save).not.toHaveBeenCalled();
     expect(credentialService.delete).not.toHaveBeenCalled();

@@ -1,6 +1,7 @@
 # 织流桌面二开：平台授权接入技术版
 
-源码基线：ZCode `6d5982eb94c8f12a6a8c8b778da1a9f447208a5a`，产品分支 `zhiliu/desktop-saas-20261019`。
+初版构建基线：ZCode `6d5982eb94c8f12a6a8c8b778da1a9f447208a5a`，产品分支 `zhiliu/desktop-saas-20261019`。
+2026-10-21 已集成官方 3.16.2 固定提交 `3c5b227649371507ddc4eb46ac5133afe6db1cab`；本轮源码、检查及安装范围见[上游同步记录](releases/2026-10-21-upstream-3.16.2.md)。
 保留 `origin` 上游和 `fork` 产品仓库，保留 Apache-2.0 及第三方声明。本分支没有修改织流 SaaS 的原始需求文档。
 
 ## 已实现
@@ -32,6 +33,8 @@
 8. 云端录音/屏幕共享等浏览器系统权限当前关闭；附件上传不受这一限制。
 
 ## 构建
+
+后续同步上游可运行 `pnpm sync:zhiliu-upstream`。命令核对官方 origin、固定上游 SHA 并创建独立集成 worktree；冲突时停止，保留当前产品工作树。它不自动提交、推送或安装。兼容解决、验证与发布规则见[上游同步规格](../../specs/zhiliu-upstream-sync.md)。
 
 使用仓库固定的 Node 24.14.0、pnpm 10.33.2。安装依赖后运行：
 

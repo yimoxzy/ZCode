@@ -3,6 +3,7 @@ import {
   resolveHighspeedDrawProviderId,
   highspeedDrawResponseSchema,
   HIGHSPEED_CARD_EXPIRED_PROVIDER_ERROR_CODE,
+  ZHILIU_DESKTOP_ENABLED,
   type HighspeedCardApi,
   type HighspeedCardUsage,
   type HighspeedCardSnapshot,
@@ -16,6 +17,7 @@ import {
   type ModelSelection,
 } from "@zcode/shared";
 import type { IHighspeedCardService } from "./highspeedCard.js";
+import { OfficialCloudDisabledError } from "../zhiliu/officialCloudPolicy.js";
 
 export { createHighspeedHttpTransport } from "./highspeedHttpTransport.js";
 
@@ -166,7 +168,7 @@ export function buildHighspeedTurnExecution(params: {
       // 账号权益未解析的窗口内，持久化选择校验失败不绑定；之后只发加速轮也不会再绑定，卡过期（3402）
       // 时降级静默跳过，整轮按 "highspeed card is invalid" 失败弹错。发起方在这里明确知道原模型，
       // 必须把它作为退回目标随声明下发（spec §2.2），不再押注 runtime 状态。
-      target: params.sessionSelection,
+      target: structuredClone(params.sessionSelection),
     },
   };
 }
@@ -203,6 +205,8 @@ export class HighspeedCardService implements IHighspeedCardService {
   }
 
   async prepareTurn(params: HighspeedPrepareTurnParams): Promise<HighspeedPrepareTurnResult> {
+    // 官方加速 RPC 不经过 Agent 的模型门禁；必须在读取账号、抽卡或恢复旧卡之前拒绝。
+    if (ZHILIU_DESKTOP_ENABLED) throw new OfficialCloudDisabledError();
     // Bug 原因：定时任务是后台输入轮，不应参与面向用户主动发送的抽卡；门禁必须只看
     // 本轮 automationId，不能读取 Task 上粘性的 cronAutomationId，否则同会话手动输入也会失去加速。
     if (params.automationId?.trim()) {
@@ -267,7 +271,18 @@ export class HighspeedCardService implements IHighspeedCardService {
     };
   }
 
-  healthy(cardId: string): Promise<HighspeedCardUsage> {
+  async invalidateCard(cardId: string): Promise<boolean> {
+    this.expireCard(this.now());
+    if (this.card?.cardId !== cardId) return false;
+    // Bug 根因：创建期发现加速 Provider 已从 Registry 下架时，卡仍留在服务里，Renderer 会继续
+    // 锁定模型选择器。按事件携带的 cardId 作废当前卡，旧事件不能误删随后抽到的新卡；冷却时间不变。
+    this.card = null;
+    return true;
+  }
+
+  async healthy(cardId: string): Promise<HighspeedCardUsage> {
+    // healthy 可由 Host RPC 直接调用，不能让品牌目录中的残留 JWT 触发官方请求。
+    if (ZHILIU_DESKTOP_ENABLED) throw new OfficialCloudDisabledError();
     return this.transport.healthy(cardId);
   }
 

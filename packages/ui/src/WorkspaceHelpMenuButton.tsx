@@ -1,10 +1,9 @@
 import { useState } from "react";
+import { DesktopCommandIds, ZHILIU_DESKTOP_ENABLED } from "@zcode/shared";
 import {
-  DesktopCommandIds,
   TID_WORKSPACE_HELP_MENU_RESOURCE_MANAGER,
   TID_WORKSPACE_HELP_MENU_TRIGGER,
-  ZHILIU_DESKTOP_ENABLED,
-} from "@zcode/shared";
+} from "@zcode/shared/test-ids";
 import {
   ActivityIcon,
   BookOpenIcon,

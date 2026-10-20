@@ -33,6 +33,10 @@ vi.mock("@/logger.js", () => ({ logger: { warn: vi.fn(), error: vi.fn(), info: v
 
 import { DesktopCommandIds } from "@zcode/shared";
 import { ModelConfigSelect } from "@/ModelConfigSelect.js";
+import { ComposerModelMenu } from "@/chat-input-toolbar/ComposerModelMenu.js";
+import { ComposerProviderMenu } from "@/chat-input-toolbar/ComposerProviderMenu.js";
+import { WindowsTopLeftLogo } from "@/WindowsTopLeftLogo.js";
+import { ZCodeAppLogo } from "@/components/mobile-ui/ZCodeAppLogo.js";
 import { ModelProviderSection } from "@/settings/ModelProviderSection.js";
 import { ConversationComposer, type ConversationComposerProps } from "@/v4/ConversationComposer.js";
 import { LoginPanel } from "@/WelcomeScreen.js";
@@ -120,5 +124,56 @@ describe("织流仅平台授权的 UI 边界", () => {
     const result = render(createElement(OnboardingDialog, {}));
     expect(result.container.innerHTML).toBe("");
     expect(state.forbiddenHook).not.toHaveBeenCalled();
+  });
+
+  it("新增模型与供应商入口独立挂载也不展示个人接入或执行切换", () => {
+    const onSelect = vi.fn();
+    const renderConnection = vi.fn();
+    const view = render(
+      createElement(ComposerModelMenu, {
+        groups: [],
+        normalizedValue: "private-model",
+        options: {
+          providerLabel: "provider",
+          modelsLabel: "models",
+          effortLabel: "effort",
+          selectModelLabel: "select",
+          levels: [],
+          value: "",
+          onValueChange: onSelect,
+        },
+        renderItems: vi.fn(),
+        renderConnection,
+        providerFooter: createElement("button", null, "个人 Key"),
+        isItemLocked: () => false,
+        onSelectModel: onSelect,
+      }),
+    );
+    expect(view.container.innerHTML).toBe("");
+    view.rerender(
+      createElement(ComposerProviderMenu, {
+        groups: [],
+        group: undefined,
+        label: "provider",
+        onSelect,
+        providerFooter: createElement("button", null, "配置供应商"),
+        children: createElement("span", null, "连接方式"),
+      }),
+    );
+    expect(view.container.innerHTML).toBe("");
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(renderConnection).not.toHaveBeenCalled();
+    expect(state.forbiddenHook).not.toHaveBeenCalled();
+  });
+
+  it("新标题栏与移动端应用图标使用织流品牌", () => {
+    const view = render(createElement(WindowsTopLeftLogo));
+    expect(
+      view.container.querySelector('[data-testid="settings-logo"]')?.getAttribute("aria-label"),
+    ).toBe("织流");
+    expect(view.container.querySelector("img")?.className).toContain("size-5");
+    expect(view.container.innerHTML).not.toContain("ZCode");
+    view.rerender(createElement(ZCodeAppLogo, {}));
+    expect(view.container.querySelector("img")?.getAttribute("data-app-logo")).toBe("zhiliu");
   });
 });

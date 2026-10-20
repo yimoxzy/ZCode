@@ -44,7 +44,8 @@ export function showZhiliuNativeReview(
   window.removeMenu();
   window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   const fallback = kind === "operation" ? "reject" : "summary";
-  const choices =
+  // 每项固定为动作/文案元组，严格索引检查下也不允许 undefined 进入审批结果。
+  const choices: ReadonlyArray<readonly [string, string]> =
     kind === "operation"
       ? [
           ["reject", "拒绝"],

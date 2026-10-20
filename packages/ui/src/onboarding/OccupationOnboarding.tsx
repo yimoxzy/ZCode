@@ -82,7 +82,6 @@ function OccupationOnboardingImpl({
   const [needsOnboarding, markOnboarded] = useOnboardingTrigger({
     onboardingRecord,
     userId,
-    hasStoredOccupation: Boolean(settings?.onboardingOccupation),
     loadDeviceMid,
     update,
   });
