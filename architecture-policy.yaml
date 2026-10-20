@@ -761,6 +761,25 @@ modules:
     layers:
       ui: .
     owner: conversation
+  # host-source-server-connection：由 architecture:adopt 登记
+  - id: host-source-server-connection
+    roots:
+      - packages/desktop/src/host/source-server-connection
+      - packages/desktop/src/host/sourceServerConnectionManager.ts
+    managed: true
+    requires:
+      - desktop
+      - project-storage
+      - rpc
+      - server
+      - services
+      - shared
+    publicEntrypoints:
+      - packages/desktop/src/host/source-server-connection/contract.ts
+      - packages/desktop/src/host/sourceServerConnectionManager.ts
+    layers:
+      adapters: .
+    owner: desktop-runtime
 
 global:
   # 临时时间戳（2026-09-10）：unmanaged-new-file 只约束此日期之后首次入库的文件。
@@ -776,6 +795,14 @@ global:
   acceptedUpstreamSnapshot: scripts/architecture/upstream-snapshot.json
 
 exceptions:
+  - id: host-source-server-upstream-state-machine-size
+    rule: max-file-lines
+    paths: [packages/desktop/src/host/sourceServerConnectionManager.ts]
+    reason: 受管 host-source-server-connection 模块继承固定上游 3c5b2276 的连接、重试、更新和取消状态机，多个路径共用同一代际身份。本轮仅补织流执行门控和模块归属，保留上游实现路径与单 owner，避免为同步版本拆分并改变时序；只接受该文件既有体积，不豁免新增文件归属、依赖或其他规则。
+  - id: host-source-server-upstream-state-machine-lint-note
+    rule: disable-count
+    paths: [packages/desktop/src/host/sourceServerConnectionManager.ts]
+    reason: 固定上游 3c5b2276 已有一条说明状态机保持单文件原因的 eslint-disable max-lines 注释；本轮保留原实现，不新增抑制。仅对该文件既有注释登记，不关闭新增文件受管、依赖与层级检查。
   - id: zhiliu-existing-desktop-adapters
     rule: unmanaged-new-file
     paths:
