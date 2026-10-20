@@ -73,6 +73,8 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     const options = { cwd: resolve(import.meta.dirname, "..") };
     for (let index = 0; index < args.length; index++) {
       const option = args[index];
+      // pnpm run 会把额外的 -- 原样转发；保留文档中的标准参数分隔写法。
+      if (option === "--") continue;
       if (option === "--no-fetch") options.fetch = false;
       else if (["--ref", "--directory", "--branch"].includes(option) && args[index + 1]) {
         options[option.slice(2)] = args[++index];

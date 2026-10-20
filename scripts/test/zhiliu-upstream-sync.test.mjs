@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative } from "node:path";
+import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import { prepareZhiliuUpstreamSync } from "../sync-zhiliu-upstream.mjs";
 
@@ -95,4 +96,22 @@ test("dirty worktrees and a wrong upstream are rejected; an existing ancestor is
   assert.throws(() => prepareZhiliuUpstreamSync({ cwd: directory, fetch: false }), /未提交/);
   git("remote", "set-url", "origin", "https://example.invalid/other.git");
   assert.throws(() => prepareZhiliuUpstreamSync({ cwd: directory, fetch: false }), /官方/);
+});
+
+test("the CLI accepts the separator forwarded by pnpm run", (context) => {
+  const { directory, git, base } = fixture(context);
+  git("update-ref", "refs/remotes/origin/main", base);
+  mkdirSync(join(directory, "scripts"));
+  const script = join(directory, "scripts", "sync-zhiliu-upstream.mjs");
+  copyFileSync(fileURLToPath(new URL("../sync-zhiliu-upstream.mjs", import.meta.url)), script);
+  git("add", ".");
+  git("commit", "-m", "install sync command");
+  const before = git("rev-parse", "HEAD");
+  const output = execFileSync(process.execPath, [script, "--", "--no-fetch"], {
+    cwd: directory,
+    encoding: "utf8",
+  });
+  assert.equal(JSON.parse(output).status, "already-current");
+  assert.equal(git("rev-parse", "HEAD"), before);
+  assert.equal(git("status", "--porcelain"), "");
 });
