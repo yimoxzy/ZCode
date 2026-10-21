@@ -24,6 +24,7 @@ export function ZhiliuRuntimeSelect({
   workspacePath,
   workspaceIdentity,
   disabled,
+  onSelectionChanged,
 }: ZhiliuRuntimeSelectProps) {
   const platform = usePlatform();
   const [view, setView] = useState<ZhiliuRuntimeSelectionView | null>(null);
@@ -31,6 +32,9 @@ export function ZhiliuRuntimeSelect({
   const [failed, setFailed] = useState(false);
   const [waiting, setWaiting] = useState(false);
   const epoch = useRef(0);
+  const ownerKey = workspaceIdentity?.trim() || workspacePath;
+  const owner = useRef(ownerKey);
+  owner.current = ownerKey;
   const target = { workspacePath, ...(workspaceIdentity ? { workspaceIdentity } : {}) };
   useEffect(() => {
     epoch.current++;
@@ -42,8 +46,22 @@ export function ZhiliuRuntimeSelect({
       epoch.current++;
     };
   }, [workspacePath, workspaceIdentity]);
+  useEffect(() => {
+    const invalidateAccount = () => {
+      // 账号退出/重登不换组件目标，必须显式废弃在途选择，不能让旧账号回执刷新新目录。
+      epoch.current++;
+      setView(null);
+      setFailed(false);
+      setBusy(false);
+      setWaiting(false);
+    };
+    window.addEventListener("zhiliu-account-changed", invalidateAccount);
+    return () => window.removeEventListener("zhiliu-account-changed", invalidateAccount);
+  }, []);
   const request = async (selection?: ZhiliuRuntimeSelection) => {
+    if (disabled || busy) return;
     const current = ++epoch.current;
+    const isCurrent = () => current === epoch.current && owner.current === ownerKey;
     setBusy(true);
     setFailed(false);
     setWaiting(false);
@@ -55,9 +73,12 @@ export function ZhiliuRuntimeSelect({
         selection ? { ...target, selection } : target,
       );
       const next = zhiliuRuntimeSelectionViewSchema.parse(value);
-      if (current === epoch.current) setView(next);
+      if (isCurrent()) {
+        setView(next);
+        if (selection) onSelectionChanged?.();
+      }
     } catch (error) {
-      if (current === epoch.current) {
+      if (isCurrent()) {
         setFailed(true);
         setWaiting(
           error instanceof Error &&
@@ -65,7 +86,7 @@ export function ZhiliuRuntimeSelect({
         );
       }
     } finally {
-      if (current === epoch.current) setBusy(false);
+      if (isCurrent()) setBusy(false);
     }
   };
   const agent =

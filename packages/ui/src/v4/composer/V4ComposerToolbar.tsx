@@ -40,7 +40,10 @@ import type {
   SessionUsageState,
 } from "@zcode/shared/zcode-protocol-v4";
 import { ModelConfigSelect, type ModelSelectGroup } from "@/ModelConfigSelect.js";
-import { ZhiliuRuntimeSelect } from "@/zhiliu-runtime-select/index.js";
+import {
+  ZhiliuRuntimeSelect,
+  useZhiliuManagedDraftSelection,
+} from "@/zhiliu-runtime-select/index.js";
 import type { ComposerModelOptions } from "@/chat-input-toolbar/ComposerModelMenu.js";
 import { Button } from "@/components/ui/button.js";
 import { HighspeedModelIndicator } from "@/highspeed/HighspeedModelIndicator.js";
@@ -469,6 +472,12 @@ function V4ComposerModelControlsImpl({
   onSendCompressionCommand,
   onRecoverCustomModelSelection,
 }: V4ComposerToolbarProps) {
+  useZhiliuManagedDraftSelection({
+    enabled: ZHILIU_DESKTOP_ENABLED && !modelLocked,
+    modelSelectionState,
+    draftSelection: draftConfig?.modelSelection,
+    onSelectModel,
+  });
   const { intl, locale } = useZCodeIntl();
   const { openCodingPlanUpgrade } = useCodingPlanUpgradeDialog();
   const displayProvider = provider ?? ZCODE_AGENT_PROVIDER;
@@ -1283,6 +1292,7 @@ function V4ComposerModelControlsImpl({
           workspacePath={workspacePath}
           workspaceIdentity={workspaceIdentity}
           disabled={disabled || phase === "running" || phase === "prewarming"}
+          onSelectionChanged={modelSelectionReload}
         />
       ) : highspeedPresented && highspeedModel ? (
         <HighspeedModelIndicator

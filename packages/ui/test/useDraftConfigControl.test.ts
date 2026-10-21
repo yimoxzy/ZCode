@@ -7,6 +7,8 @@ import type { IModelSelectionService, ModelSelectionView } from "@zcode/services
 import { resolveEffectiveModelSelection, type ProviderRegistryView } from "@zcode/provider";
 import { useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
 import { useDraftConfigControl as useActualDraftConfigControl } from "@/v4/composer/useDraftConfigControl.js";
+import { useZhiliuManagedDraftSelection } from "@/zhiliu-runtime-select/index.js";
+import { createComposerSubmissionConfig } from "@/v4/composer/composerSubmissionConfig.js";
 import {
   persistV4ComposerDraft as persistScopedDraft,
   readV4ComposerDraft as readScopedDraft,
@@ -253,6 +255,94 @@ function installMinimalDom() {
 }
 
 describe("useDraftConfigControl slash command hydration", () => {
+  it.each([null, "existing-session"])(
+    "repairs a saved managed draft and medium→low→high next-turn intent without resetting content or modes (%s)",
+    async (sessionId) => {
+      const workspacePath = "/managed-tier-regression";
+      const selection = (reasoningLevel: string) => ({
+        providerId: "zhiliu-managed",
+        modelId: "zhiliu-managed",
+        options: { reasoningLevel },
+      });
+      const viewFor = (level: string, revision: number): ModelSelectionView =>
+        ({
+          revision,
+          preferredSelection: selection(level),
+          providers: [
+            {
+              providerId: "zhiliu-managed",
+              config: {},
+              models: [
+                {
+                  modelId: "zhiliu-managed",
+                  config: { optionSpecs: { reasoningLevel: { values: [level], map: "{}" } } },
+                },
+              ],
+            },
+          ],
+        }) as ModelSelectionView;
+      const root = createRoot(installMinimalDom());
+      persistV4ComposerDraft(workspacePath, undefined, sessionId ?? "__draft__", {
+        text: "保留我的稿件",
+        editorStateJson: "saved-editor",
+        mention: {
+          id: "file-reference",
+          category: "files",
+          label: "参考文件",
+          value: "reference.md",
+          markdown: "@reference.md",
+        },
+        mode: "yolo",
+        planEnabled: true,
+        modelSelection: selection("medium"),
+        updatedAt: 1,
+      });
+      let control!: ReturnType<typeof useDraftConfigControl>;
+      let currentView = viewFor("low", 1);
+      function Probe() {
+        control = useDraftConfigControl({
+          workspacePath,
+          sessionId,
+          sessionConfig: sessionId
+            ? { mode: "yolo", planEnabled: true, modelSelection: selection("medium") }
+            : undefined,
+          modelSelectionView: currentView,
+          agentStartupAllowed: false,
+        });
+        useZhiliuManagedDraftSelection({
+          enabled: true,
+          modelSelectionState: control.modelSelectionRead.state,
+          draftSelection: control.draftConfig.modelSelection,
+          onSelectModel: (provider, model, _source, level) =>
+            control.handleDraftSelectModel(provider, model, level),
+        });
+        return null;
+      }
+      await act(async () => root.render(createElement(Probe)));
+      expect(control.composerDraft.modelSelection).toEqual(selection("low"));
+      expect(createComposerSubmissionConfig(control.draftConfig, currentView)).toMatchObject({
+        modelSelection: selection("low"),
+      });
+      currentView = viewFor("high", 2);
+      await act(async () => root.render(createElement(Probe)));
+      expect(control.composerDraft.modelSelection).toEqual(selection("high"));
+      expect(control.composerDraft).toMatchObject({
+        text: "保留我的稿件",
+        editorStateJson: "saved-editor",
+        mention: { id: "file-reference", category: "files", value: "reference.md" },
+        mode: "yolo",
+        planEnabled: true,
+      });
+      expect(
+        readV4ComposerDraft(workspacePath, undefined, sessionId ?? "__draft__")?.modelSelection,
+      ).toEqual(selection("high"));
+      expect(createComposerSubmissionConfig(control.draftConfig, currentView)).toMatchObject({
+        modelSelection: selection("high"),
+      });
+      act(() => root.unmount());
+    },
+  );
+
   it("PD03 同目录切项目恢复各自正文；旧 Hook 回调不能写新项目", async () => {
     const workspacePath = "/shared-project-root";
     const root = createRoot(installMinimalDom());

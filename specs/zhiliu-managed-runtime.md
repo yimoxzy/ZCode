@@ -71,3 +71,27 @@ Host/Main 的专用端口须验证单工作区授权 single-flight、断开时�
 - 私有桥的 `invalidate` 可携带可选 workspace identity；未指定仍表示退出时全量撤销。Main 等 Host ack 后才承认新选择，任何清理失败保持拒绝屏障。
 - Host 在同一 loopback listener 提供固定 `/mcp`，使用与模型独立的随机 capability，转发固定同源 `/api/runtime-gateway/mcp`。不缓存业务结果，不持久化 grant；注销/取消中止在途请求。工具调用必须透传 `tool:<原模型 toolCallId>` 幂等键，初始化/list 不伪造调用身份。
 - 记忆写入在 CLI 强制审批闭环完成前不开放。读取能力仍经 SaaS 记忆开关、个人归属和原工具 ACL 校验。
+
+## 托管档位与 Composer 下一轮意图同步
+
+2026-10-21 实机回归：从 medium 切到快速档位后，Host 只授权 low，而 Composer 旧草稿仍是 medium，严格提交校验因此禁用发送。不能放宽通用校验，也不能让 Renderer 自行扩充思考档位。
+
+Main 仍是 Agent/profile 的唯一 owner；Host ModelSelectionView 仍是执行资格的唯一来源。Selector 的 set 命令成功后只请求重读当前 Host View，不从目录名称、profile UUID 或旧 View 猜测 reasoning。Toolbar 内织流专用 coordinator 只在当前目标 Host View ready 且未带 refreshError 时，读取精确 `zhiliu-managed/zhiliu-managed` 的单值 reasoning spec，通过既有 `onSelectModel` 写入 Composer 下一次提交意图。仅修复该托管别名的缺失/失效 reasoning；个人供应商、未知别名、多值目录、不可用/加载/失败目录保持严格拒绝。恢复旧草稿及打开历史任务时使用同一路径，不另建选择真相。原生及 Web 远控共用此协调器：Web 不调用 Main 账号/选择命令，只消费其已授权 attachment 的当前 Host View，因此桌面切档后 Web 的旧草稿也不会永久禁止发送。平台 Agent/档位选择器仍仅在原生端展示。
+
+```mermaid
+sequenceDiagram
+  participant U as 平台档位选择器
+  participant M as Main选择owner
+  participant H as 当前Host ModelSelectionView
+  participant C as Composer草稿owner
+  U->>M: set(当前workspace, profile UUID)
+  M->>H: 失效旧授权，等待CLI清理
+  M-->>U: 新选择已接纳
+  U->>H: 通过现有reload请求重读
+  H-->>C: 当前授权ready目录及单值reasoning
+  C->>C: 既有onSelectModel更新下一轮意图
+```
+
+正文、附件、确认模式和 Plan 不变；不重放已接受的任务、模型或工具。运行中切换仍由 Main 拒绝；失败不调用同步回调。组件目标使用 `workspaceIdentity?.trim() || workspacePath`，切项目、卸载及账号失效立即推进请求代次，迟到的 set/get 不得重读或写入新目标。账号变更只接收失效信号，不通过 DOM 传播凭据或身份对象。
+
+验收：medium→low→high；已保存旧草稿重开；历史任务下一轮；正文/附件/权限/Plan保留；Set失败和busy拒绝；账号/工作区切换及迟到回调隔离；临时无目录时不清空选择；非托管别名仍由原严格校验拒绝。
