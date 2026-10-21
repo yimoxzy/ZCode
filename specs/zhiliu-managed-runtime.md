@@ -96,6 +96,42 @@ sequenceDiagram
 
 验收：medium→low→high；已保存旧草稿重开；历史任务下一轮；正文/附件/权限/Plan保留；Set失败和busy拒绝；账号/工作区切换及迟到回调隔离；临时无目录时不清空选择；非托管别名仍由原严格校验拒绝。
 
+### 项目切换后的选择器显示恢复
+
+实机复现：rootless 项目 A 已选快速、B 已选深度，Main 的每项目选择与 Composer 草稿均正确；B→A 后选择器只清空旧显示，直到再次打开菜单才读取，因此标题长期误显示“默认思考”。
+
+选择器在挂载、workspace target 变化或账号失效信号后，通过既有 Get 命令只读获取当前 Main 目录和选择，不等待用户打开菜单。展示回执绑定完整 target；切换立即隐藏旧项目显示，读取期间显示“正在读取平台配置…”，失败显示“配置读取失败，请重试”，不得把未读或失败解释为默认选择。菜单打开继续提供只读刷新。运行期 disabled 只阻止修改，不能阻止只读恢复标题。
+
+Main 仍为唯一选择 owner；该恢复不 Set、不写 Composer 草稿、不调用 `onSelectionChanged`，也不创建 Renderer 选择缓存。每次请求受 target 与代次校验，迟到 A 不能覆盖 B，账号换代/卸载后回执丢弃。rootless 项目的真实 workspacePath 由既有项目解析链提供，不从 project UUID 拼接路径，也不因标题恢复触发 Host 重建。
+
+```mermaid
+sequenceDiagram
+  participant P as 当前项目target
+  participant S as 选择器显示投影
+  participant M as Main选择owner
+  P->>S: A切换到B（现有workspacePath/identity）
+  S->>S: 隐藏A显示，推进请求代次
+  S->>M: Get(B)，只读
+  M-->>S: B目录与已接纳选择
+  S->>S: 校验target与代次后显示B
+  M-->>S: 迟到A回执
+  S->>S: 丢弃，不写草稿或触发Host reload
+```
+
+验收：真实 rootless A快速/B深度往返，未打开菜单也恢复正确标题；初始加载、加载中切换及迟到读取隔离；只读失败可理解并可通过菜单重试；运行中仍读标题但禁止Set；账号失效/重登及卸载无迟到写入；原Set成功才刷新Host的规则不变。
+
+### 复用上游思考滑杆，平台档位仍由 Main 接纳
+
+保留上游原生思考档位的滑杆、滚动标签、最高档气泡、键盘、拖拽和焦点行为。在既有 `ComposerModelMenu.tsx` 中抽出纯展示 `ComposerEffortSlider`，上游菜单与织流选择器共用一份渲染实现和原 CSS；不启用 managed 模式已禁用的供应商/模型菜单，不增加个人 Key 或模型设置。
+
+纯组件只接受 `levels[{value,label,inactive?}]`、受控 `value`、标题/快捷键、禁用态、视觉重置键、可选 highspeed 视觉以及 `onValueChange(value)`。它仅维护 hover/focus 视觉，不读取账号、Host、目录、计费或授权，不接纳第二份选择。上游调用方把原 reasoning 值和关闭态映射到该合同，原行为保持。
+
+织流调用方只使用 Main 返回的 `catalog.inference_profiles`：保持服务端数组顺序，值为 profile UUID，名称为平台档位名；显式“默认思考”使用仅限 UI 的 sentinel，在既有 Set 边界转换为 `inference_profile_id=null`。不得由名称、价格、Host 单值 reasoning spec 或浏览器 range 物理位置推断档位。滑动只发既有 Main Set，保留当前 Agent UUID；Main 成功回执前不乐观更新已接纳值，拒绝/清理失败时滑杆和标题保持原选择。读取中/运行中禁止调整，迟到结果继续受 target/账号代次屏障限制。
+
+Set 成功后仍由已有 `onSelectionChanged` 重读当前 Host，已有单值 reasoning coordinator 更新下一轮草稿；本组件不直接写 reasoning，也不改变正文、附件、权限、Plan 或已接受任务。
+
+验收：原 `composerModelThinking` 交互测试完整保留；平台 UUID 顺序映射、默认 null、保留当前 Agent、最高档原气泡、键盘与拖拽；Set 等待/失败不乐观更新；无效/缺失选择不冒充首档；目标/账号切换迟到 Set 隔离；managed 下供应商/模型设置入口仍隐藏。
+
 ## 同一 Host 多工作区目录隔离
 
 已验证缺陷：workspace one 的 broker 授权 low、two 的 broker 授权 high；再次复用 one 原 broker 时，旧全局 `profile/readProfile()` 仍发布 high 目录。供应商请求由各自 grant 在 SaaS 强制固定，所以该缺陷未证明跨空间扣费，却会让 UI 草稿和 CLI 授权不一致。不得通过向所有项目展示 low/high 联集来绕过。
