@@ -286,6 +286,64 @@ describe("织流 Main 浏览器账号所有者", () => {
     expect(await h.auth.authorizeRelay()).toBeUndefined();
     expect(h.http).toHaveBeenCalledTimes(requests);
   });
+  it("旧账号等待验证的relay请求不能在退出重登录后为新空间发行", async () => {
+    const h = fixture(true),
+      original = h.http.getMockImplementation()!,
+      held = deferred<Response>();
+    const { login_token: _ignored, ...oldSession } = structuredClone(h.record.credential);
+    h.http.mockImplementationOnce(() => held.promise);
+    const pending = h.auth.authorizeRelay();
+    await vi.waitFor(() => expect(h.http).toHaveBeenCalledOnce());
+    await h.auth.logout();
+    h.record.credential.space_id = authorizationId;
+    h.record.credential.space.id = authorizationId;
+    let issues = 0;
+    h.http.mockImplementation(async (url, init) => {
+      if (String(url).endsWith("/relay-grants")) {
+        issues++;
+        return h.response({
+          protocol_version: 1,
+          relay_grant: "rc_test_non_secret_01234567890123456789",
+          expires_at: new Date(Date.now() + 300000).toISOString(),
+          principal_id: `${h.record.credential.user_id}:${h.record.credential.space_id}`,
+          desktop_device_id: h.record.credential.device_id,
+        });
+      }
+      return original(url, init);
+    });
+    await h.auth.login();
+    held.resolve(h.response(oldSession));
+    expect(await pending).toBeUndefined();
+    expect(issues).toBe(0);
+    expect(await h.auth.authorizeRelay()).toMatchObject({
+      principal_id: `${h.record.credential.user_id}:${authorizationId}`,
+    });
+  });
+  it("发行中的旧relay授权在退出后返回不能进入缓存", async () => {
+    const h = fixture(true),
+      original = h.http.getMockImplementation()!,
+      held = deferred<Response>();
+    h.http.mockImplementation((url, init) =>
+      String(url).endsWith("/relay-grants") ? held.promise : original(url, init),
+    );
+    const pending = h.auth.authorizeRelay();
+    const rejected = expect(pending).rejects.toThrow("远控授权已断开");
+    await vi.waitFor(() =>
+      expect(h.http.mock.calls.some(([url]) => String(url).endsWith("/relay-grants"))).toBe(true),
+    );
+    await h.auth.logout();
+    held.resolve(
+      h.response({
+        protocol_version: 1,
+        relay_grant: "rc_test_non_secret_01234567890123456789",
+        expires_at: new Date(Date.now() + 300000).toISOString(),
+        principal_id: `${h.record.credential.user_id}:${h.record.credential.space_id}`,
+        desktop_device_id: h.record.credential.device_id,
+      }),
+    );
+    await rejected;
+    expect(await h.auth.authorizeRelay()).toBeUndefined();
+  });
   it("logs in through the system browser without starting a directory connection or exposing secrets to UI", async () => {
     const h = fixture();
     const result = await h.auth.login();

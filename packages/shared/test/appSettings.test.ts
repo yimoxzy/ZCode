@@ -388,6 +388,34 @@ describe("app settings", () => {
       }).webRemoteControlLastEnabledContext,
     ).toEqual(context);
   });
+  it("retains versioned remote restore principal in full and patch settings; legacy remains readable", () => {
+    const context = {
+      workspacePath: "/workspace/demo",
+      identity: {
+        version: 1,
+        userId: "user:space",
+        endpointOrigin: "https://platform.example.test",
+      },
+    };
+    for (const schema of [appSettingsSchema, appSettingsPatchSchema]) {
+      expect(
+        schema.parse({ webRemoteControlLastEnabledContext: context })
+          .webRemoteControlLastEnabledContext,
+      ).toEqual(context);
+      expect(
+        schema.safeParse({
+          webRemoteControlLastEnabledContext: {
+            ...context,
+            identity: { ...context.identity, version: 2 },
+          },
+        }).success,
+      ).toBe(false);
+      expect(
+        schema.parse({ webRemoteControlLastEnabledContext: { workspacePath: "/old" } })
+          .webRemoteControlLastEnabledContext,
+      ).toEqual({ workspacePath: "/old" });
+    }
+  });
 });
 
 // DWG-19（docs/dynamic-workflow/launch.md「The user's choice」）：空串是删除选择的哨兵，

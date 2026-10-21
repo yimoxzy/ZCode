@@ -1088,6 +1088,7 @@ const webRemoteControlManager = createWebRemoteControlManager({
           workspacePath: context.workspacePath,
           workspaceIdentity: context.workspaceIdentity,
           initialTaskId: context.initialTaskId,
+          identity: context.identity,
         },
       });
     },

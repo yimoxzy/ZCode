@@ -37,6 +37,17 @@ async function fixture(
     webRemoteControlExternalRelayDevice: { deviceSid: "v1-sid" },
     ...initialSettings,
   };
+  // 既有恢复用例表示此前已明确授权的目录；legacy 用例在 fixture 后单独写入无绑定记录。
+  if (settings.webRemoteControlLastEnabledContext) {
+    settings.webRemoteControlLastEnabledContext = {
+      ...settings.webRemoteControlLastEnabledContext,
+      identity: settings.webRemoteControlLastEnabledContext.identity ?? {
+        version: 1,
+        userId: "user",
+        endpointOrigin: relay.httpUrl,
+      },
+    };
+  }
   const credentials = new Map([["web-remote-control:external-relay:pass_hash", "v1-hash"]]);
   let login: { jwt: string; userId: string } | undefined = { jwt: "jwt", userId: "user" };
   let endpoint = relay.httpUrl;
@@ -55,6 +66,11 @@ async function fixture(
   });
   const readLogin = vi.fn(async () => login);
   const loadEnabled = vi.fn(async () => settings.webRemoteControlLastEnabledContext);
+  const saveEnabled = vi.fn(
+    async (context: NonNullable<AppSettings["webRemoteControlLastEnabledContext"]>) => {
+      settings.webRemoteControlLastEnabledContext = context;
+    },
+  );
   const attachWorkspaceHost = vi.fn(async () => {
     throw new Error("No bridge expected");
   });
@@ -74,9 +90,7 @@ async function fixture(
     featureGate: createWebRemoteControlFeatureGate(true),
     startupRestoreStorageProvider: {
       load: loadEnabled,
-      save: async (context) => {
-        settings.webRemoteControlLastEnabledContext = context;
-      },
+      save: saveEnabled,
       clear: async () => {
         settings.webRemoteControlLastEnabledContext = undefined;
       },
@@ -117,6 +131,7 @@ async function fixture(
     logger,
     readLogin,
     loadEnabled,
+    saveEnabled,
     attachWorkspaceHost,
     setLogin: (value: typeof login) => {
       login = value;
@@ -247,7 +262,7 @@ describe("V2 manager public API with real relay", () => {
     ).toHaveLength(1);
   });
 
-  it("凭据清空后的 provider 清理失败仍撤销配对连接并保留启用记录", async () => {
+  it("凭据清空后的 provider 清理失败仍撤销配对连接和目录恢复意图", async () => {
     const f = await fixture();
     const credentials = new Map([
       ["oauth:active_provider", "zai"],
@@ -293,7 +308,7 @@ describe("V2 manager public API with real relay", () => {
     await vi.waitFor(() => expect(terminal.socket.readyState).toBe(WebSocket.CLOSED));
     expect(f.manager.getStatus(1)).toEqual({ status: "auth-required" });
     expect(credentials.has("zcodejwttoken")).toBe(false);
-    expect(f.settings.webRemoteControlLastEnabledContext).toEqual({ workspacePath: "/workspace" });
+    await vi.waitFor(() => expect(f.settings.webRemoteControlLastEnabledContext).toBeUndefined());
   });
   it("首次注册503交给连接退避恢复，无需再次点击启动", async () => {
     let registrations = 0;
@@ -305,7 +320,10 @@ describe("V2 manager public API with real relay", () => {
     const result = await f.start();
     expect(result.status).toBe("running");
     expect(registrations).toBe(2);
-    expect(f.settings.webRemoteControlLastEnabledContext).toEqual({ workspacePath: "/workspace" });
+    expect(f.settings.webRemoteControlLastEnabledContext).toMatchObject({
+      workspacePath: "/workspace",
+      identity: { version: 1, userId: "user", endpointOrigin: f.relay.httpUrl },
+    });
   });
   it("首次注册退避期间停止会撤销后续注册和启动", async () => {
     const f = await fixture({
@@ -321,12 +339,84 @@ describe("V2 manager public API with real relay", () => {
     expect(f.manager.getStatus(1).status).toBe("idle");
     expect(f.settings.webRemoteControlLastEnabledContext).toBeUndefined();
   });
-  it("直接换账号撤销旧身份，旧账号不能访问工作区，新账号可连接且重复通知幂等", async () => {
+  it("旧无身份目录意图不能自动授权给当前账号", async () => {
+    const context = { workspacePath: "/workspace" };
+    const f = await fixture();
+    f.settings.webRemoteControlLastEnabledContext = context;
+    expect(await f.manager.restorePreviouslyEnabled(1, [context])).toBe(false);
+    expect(f.relay.httpCalls).toEqual([]);
+    expect(f.attachWorkspaceHost).not.toHaveBeenCalled();
+  });
+  it.each(["other-user", "user:space-b"])("绑定目录不能恢复到另一principal %s", async (userId) => {
+    const f = await fixture();
+    const context = {
+      workspacePath: "/workspace",
+      identity: { version: 1 as const, userId: "user:space-a", endpointOrigin: f.relay.httpUrl },
+    };
+    f.settings.webRemoteControlLastEnabledContext = context;
+    f.setLogin({ jwt: "other", userId });
+    expect(await f.manager.restorePreviouslyEnabled(1, [context])).toBe(false);
+    expect(f.relay.httpCalls).toEqual([]);
+  });
+  it("相同principal普通重启恢复，换服务origin拒绝恢复", async () => {
+    const f = await fixture();
+    const context = {
+      workspacePath: "/workspace",
+      identity: { version: 1 as const, userId: "user", endpointOrigin: f.relay.httpUrl },
+    };
+    f.settings.webRemoteControlLastEnabledContext = context;
+    f.setEndpoint("https://another.example.test");
+    expect(await f.manager.restorePreviouslyEnabled(1, [context])).toBe(false);
+    f.setEndpoint(f.relay.httpUrl);
+    expect(await f.manager.restorePreviouslyEnabled(1, [context])).toBe(true);
+    expect(f.settings.webRemoteControlLastEnabledContext).toMatchObject(context);
+  });
+  it("退出等待迟到save后清除目录意图，再登录不能自动恢复", async () => {
+    const f = await fixture(),
+      held = Promise.withResolvers<void>();
+    f.saveEnabled.mockImplementationOnce(async (context) => {
+      await held.promise;
+      f.settings.webRemoteControlLastEnabledContext = context;
+    });
+    const started = f.start().catch((error: unknown) => error);
+    await vi.waitFor(() => expect(f.saveEnabled).toHaveBeenCalledOnce());
+    f.manager.syncAvailableWorkspaces(1, [{ workspacePath: "/workspace", kind: "local" }]);
+    f.setLogin(undefined);
+    const logout = f.manager.notifyAuthStateChanged(1, { state: "signed-out" });
+    expect(f.manager.getStatus(1).status).toBe("auth-required");
+    held.resolve();
+    await logout;
+    expect(await started).toBeInstanceOf(Error);
+    expect(f.settings.webRemoteControlLastEnabledContext).toBeUndefined();
+    f.setLogin({ jwt: "jwt", userId: "user" });
+    await f.manager.notifyAuthStateChanged(1, { state: "signed-in" });
+    expect(f.manager.getStatus(1).status).toBe("idle");
+  });
+  it("注册内续签撤销重入signed-out清理不等待自身，旧票据失效", async () => {
+    const f = await fixture(),
+      context = { workspacePath: "/workspace" };
+    const staleTicket = f.manager.authorizeStart(2, context);
+    f.readLogin
+      .mockResolvedValueOnce({ userId: "user", jwt: "jwt" })
+      .mockImplementationOnce(async () => {
+        f.setLogin(undefined);
+        await f.manager.notifyAuthStateChanged(1, { state: "signed-out" });
+        return undefined;
+      });
+    await expect(f.start()).rejects.toBeInstanceOf(Error);
+    await expect(f.manager.startAuthorized(2, context, staleTicket)).rejects.toThrow();
+    expect(f.relay.httpCalls).toEqual([]);
+    expect(f.settings.webRemoteControlLastEnabledContext).toBeUndefined();
+  });
+  it("直接换账号撤销旧身份，新账号明确开启后可连接且重复通知幂等", async () => {
     const f = await fixture();
     const first = await f.start();
     f.manager.syncAvailableWorkspaces(1, [{ workspacePath: "/workspace", kind: "local" }]);
     f.setLogin({ userId: "other-user", jwt: "other" });
     await f.manager.notifyAuthStateChanged(1, { state: "signed-in" });
+    expect(f.manager.getStatus(1).status).toBe("idle");
+    expect(f.settings.webRemoteControlRelayV2Device?.userId).toBe("user");
+    await f.start();
     const next = f.manager.getStatus(1);
     expect(next.status).toBe("running");
     expect(next.sessionId).not.toBe(first.sessionId);
@@ -356,7 +446,7 @@ describe("V2 manager public API with real relay", () => {
     await f.manager.notifyAuthStateChanged(1, { state: "signed-in" });
     expect(f.relay.httpCalls).toHaveLength(calls);
   });
-  it("换账号同时撤销所有旧窗口，只恢复已同步的上次启用目标", async () => {
+  it("换账号同时撤销所有旧窗口，新账号不能继承已同步目录", async () => {
     const f = await fixture();
     await f.start();
     const second = { workspacePath: "/second" };
@@ -366,24 +456,28 @@ describe("V2 manager public API with real relay", () => {
     f.setLogin({ userId: "other-user", jwt: "other" });
     await f.manager.notifyAuthStateChanged(1, { state: "signed-in" });
     expect(f.manager.getStatus(1).status).toBe("idle");
-    expect(f.manager.getStatus(2)).toMatchObject({ status: "running", workspacePath: "/second" });
-    expect(f.settings.webRemoteControlRelayV2Device?.userId).toBe("other-user");
-    const old = await fetch(`${f.relay.httpUrl}/api/v1/remote/device`, {
-      headers: { Authorization: "Bearer jwt" },
+    expect(f.manager.getStatus(2).status).toBe("idle");
+    expect(f.settings.webRemoteControlRelayV2Device?.userId).toBe("user");
+    await vi.waitFor(async () => {
+      const old = await fetch(`${f.relay.httpUrl}/api/v1/remote/device`, {
+        headers: { Authorization: "Bearer jwt" },
+      });
+      const { data: oldDevices } = await old.json();
+      expect(oldDevices.every((device: { online: boolean }) => !device.online)).toBe(true);
     });
-    const { data: oldDevices } = await old.json();
-    expect(oldDevices.every((device: { online: boolean }) => !device.online)).toBe(true);
   });
-  it("登录通知发生在首次身份读取期间时，丢弃旧读取并用新身份启动", async () => {
+  it("登录通知发生在首次身份读取期间时，撤销旧目录开启请求", async () => {
     const f = await fixture();
     const stale = Promise.withResolvers<{ userId: string; jwt: string }>();
     f.readLogin.mockReturnValueOnce(stale.promise);
-    const started = f.start();
+    const started = f.start().catch((error: unknown) => error);
     await vi.waitFor(() => expect(f.readLogin).toHaveBeenCalledOnce());
     f.setLogin({ userId: "other-user", jwt: "other" });
     await f.manager.notifyAuthStateChanged(1, { state: "signed-in" });
     stale.resolve({ userId: "user", jwt: "jwt" });
-    expect((await started).status).toBe("running");
+    expect(await started).toBeInstanceOf(Error);
+    expect(f.relay.httpCalls).toEqual([]);
+    await f.start();
     expect(f.settings.webRemoteControlRelayV2Device?.userId).toBe("other-user");
     expect(f.relay.httpCalls.every((call) => call.userId === "other-user")).toBe(true);
   });
@@ -403,7 +497,9 @@ describe("V2 manager public API with real relay", () => {
     stale.resolve({ userId: "user", jwt: "jwt" });
     await notification;
     expect(await started).toBeInstanceOf(Error);
-    expect(f.manager.getStatus(1).status).toBe("running");
+    expect(f.manager.getStatus(1).status).toBe("idle");
+    expect(f.relay.httpCalls).toEqual([]);
+    await f.start();
     expect(f.settings.webRemoteControlRelayV2Device?.userId).toBe("other-user");
     expect(f.relay.httpCalls.every((call) => call.userId === "other-user")).toBe(true);
   });
@@ -456,7 +552,7 @@ describe("V2 manager public API with real relay", () => {
     await f.manager.notifyAuthStateChanged(1, { state: "signed-in" });
     expect(f.relay.httpCalls.filter((call) => call.path.endsWith("/token"))).toHaveLength(1);
   });
-  it("登录先于workspace同步时等待，登出停止且保留目标，重新登录可恢复", async () => {
+  it("登录先于workspace同步时等待，显式登出清目标，重新登录必须明确开启", async () => {
     const context = { workspacePath: "/workspace", workspaceIdentity: "ssh://host/repo" };
     const f = await fixture({}, { webRemoteControlLastEnabledContext: context });
     await f.manager.notifyAuthStateChanged(1, { state: "signed-in" });
@@ -467,13 +563,11 @@ describe("V2 manager public API with real relay", () => {
     f.setLogin(undefined);
     await f.manager.notifyAuthStateChanged(1, { state: "signed-out" });
     expect(f.manager.getStatus(1)).toEqual({ status: "auth-required" });
-    expect(f.settings.webRemoteControlLastEnabledContext).toMatchObject(context);
+    expect(f.settings.webRemoteControlLastEnabledContext).toBeUndefined();
     f.setLogin({ jwt: "jwt", userId: "user" });
     await f.manager.notifyAuthStateChanged(1, { state: "signed-in" });
-    expect(f.manager.getStatus(1)).toMatchObject({
-      status: "running",
-      remoteSessionId: "new-session",
-    });
+    expect(f.manager.getStatus(1).status).toBe("idle");
+    await f.start({ ...context, remoteSessionId: "new-session" });
     await f.manager.stop(1);
     await f.manager.notifyAuthStateChanged(1, { state: "signed-in" });
     expect(f.manager.getStatus(1).status).toBe("idle");
@@ -526,7 +620,7 @@ describe("V2 manager public API with real relay", () => {
     expect(f.relay.httpCalls).toEqual([]);
     expect(f.relay.messages).toEqual([]);
     expect(f.attachWorkspaceHost).not.toHaveBeenCalled();
-    expect(f.settings.webRemoteControlLastEnabledContext).toEqual({ workspacePath: "/workspace" });
+    expect(f.settings.webRemoteControlLastEnabledContext).toBeUndefined();
   });
   it("手动停止及关闭窗口使正在读取的启动恢复失效", async () => {
     const context = { workspacePath: "/workspace" };
@@ -558,15 +652,19 @@ describe("V2 manager public API with real relay", () => {
       status: "running",
       workspacePath: "/workspace",
     });
-    await f.manager.notifyAuthStateChanged(1, { state: "signed-out" });
-    const pending = Promise.withResolvers<typeof local>();
-    f.loadEnabled.mockReturnValueOnce(pending.promise);
-    const login = f.manager.notifyAuthStateChanged(1, { state: "signed-in" });
-    await vi.waitFor(() => expect(f.loadEnabled).toHaveBeenCalledTimes(3));
-    f.manager.syncAvailableWorkspaces(1, [remote]);
-    pending.resolve(local);
+    const g = await fixture({}, { webRemoteControlLastEnabledContext: local });
+    g.setLogin(undefined);
+    await g.manager.restorePreviouslyEnabled(1, [local, remote]);
+    const saved = g.settings.webRemoteControlLastEnabledContext!;
+    const pending = Promise.withResolvers<typeof saved>();
+    g.loadEnabled.mockReturnValueOnce(pending.promise);
+    g.setLogin({ jwt: "jwt", userId: "user" });
+    const login = g.manager.notifyAuthStateChanged(1, { state: "signed-in" });
+    await vi.waitFor(() => expect(g.loadEnabled).toHaveBeenCalledTimes(2));
+    g.manager.syncAvailableWorkspaces(1, [remote]);
+    pending.resolve(saved);
     await login;
-    expect(f.manager.getStatus(1).status).toBe("idle");
+    expect(g.manager.getStatus(1).status).toBe("idle");
   });
   it("远程恢复等待当前remoteSessionId，不为离线占位tab启动relay", async () => {
     const context = { workspacePath: "/remote", workspaceIdentity: "ssh://host/remote" };
@@ -630,7 +728,10 @@ describe("V2 manager public API with real relay", () => {
         }),
       { timeout: 4000 },
     );
-    expect(f.settings.webRemoteControlLastEnabledContext).toEqual({ workspacePath: "/workspace" });
+    expect(f.settings.webRemoteControlLastEnabledContext).toMatchObject({
+      workspacePath: "/workspace",
+      identity: { version: 1, userId: "user", endpointOrigin: f.relay.httpUrl },
+    });
     expect(f.settings.webRemoteControlRelayV2Device).toBeDefined();
   });
   it("KICKED有界恢复最终对外返回session-conflict", async () => {
@@ -680,7 +781,10 @@ describe("V2 manager public API with real relay", () => {
     await vi.advanceTimersByTimeAsync(30000);
     await delay(80);
     expect(f.manager.getStatus(1).status).toBe("running");
-    expect(f.settings.webRemoteControlLastEnabledContext).toEqual({ workspacePath: "/workspace" });
+    expect(f.settings.webRemoteControlLastEnabledContext).toMatchObject({
+      workspacePath: "/workspace",
+      identity: { version: 1, userId: "user", endpointOrigin: f.relay.httpUrl },
+    });
   });
   it("token401终止状态不能被远程workspace关闭通知覆盖", async () => {
     const f = await fixture({

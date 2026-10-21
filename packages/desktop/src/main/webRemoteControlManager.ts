@@ -1,4 +1,4 @@
-import type { RendererTelemetryEventPayload } from "@zcode/shared";
+import type { AppSettings, RendererTelemetryEventPayload } from "@zcode/shared";
 /* eslint-disable max-lines -- Web 远程控制 manager 承担外部 relay app payload 路由与 workspace bridge 编排。 */
 import type { MessagePortMain, UtilityProcess as ElectronUtilityProcess } from "electron";
 import { randomUUID } from "node:crypto";
@@ -91,11 +91,9 @@ interface WebRemoteControlDeviceTransportLike {
   dispose(): void;
 }
 
-interface WebRemoteControlStartupRestoreContext {
-  workspacePath: string;
-  workspaceIdentity?: string;
-  initialTaskId?: string;
-}
+type WebRemoteControlStartupRestoreContext = NonNullable<
+  AppSettings["webRemoteControlLastEnabledContext"]
+>;
 
 export interface WebRemoteControlStartAuthorization {
   token: string;
@@ -103,6 +101,7 @@ export interface WebRemoteControlStartAuthorization {
   windowId: number;
   workspaceKey: string;
   remoteSessionId?: string;
+  authRevision: number;
 }
 
 const WEB_REMOTE_CONTROL_START_AUTHORIZATION_TTL_MS = 30_000;
@@ -309,6 +308,7 @@ export function createWebRemoteControlManager(dependencies: WebRemoteControlMana
   const windowLifecycles = new Map<number, WindowControlLifecycle>();
   const authRequiredWindows = new Set<number>();
   let registrationQueue: Promise<unknown> = Promise.resolve();
+  let startupRestoreWrites: Promise<unknown> = Promise.resolve();
   const startAuthorizations = new Map<string, WebRemoteControlStartAuthorization>();
   const availableWorkspacesByWindowId = new Map<number, WebRemoteControlWorkspaceTarget[]>();
 
@@ -357,6 +357,13 @@ export function createWebRemoteControlManager(dependencies: WebRemoteControlMana
   let lifecycleRevision = 0;
   let authNotificationRevision = 0;
 
+  function withStartupRestoreStorage<T>(operation: () => Promise<T>): Promise<T> {
+    // 仅串行目录设置写入；不能等待注册队列，否则续签401触发退出会重入等待自身。
+    const pending = startupRestoreWrites.then(operation);
+    startupRestoreWrites = pending.catch(() => {});
+    return pending;
+  }
+
   function createTransport(options: WebRemoteControlDeviceTransportOptions) {
     return dependencies.createDeviceTransport
       ? dependencies.createDeviceTransport(options)
@@ -388,6 +395,7 @@ export function createWebRemoteControlManager(dependencies: WebRemoteControlMana
       token: randomUUID(),
       expiresAt: now + WEB_REMOTE_CONTROL_START_AUTHORIZATION_TTL_MS,
       windowId,
+      authRevision: authNotificationRevision,
       workspaceKey: resolveWebRemoteControlWorkspaceKey(context),
       ...(context.remoteSessionId ? { remoteSessionId: context.remoteSessionId } : {}),
     };
@@ -410,6 +418,7 @@ export function createWebRemoteControlManager(dependencies: WebRemoteControlMana
     }
     if (
       stored.windowId !== windowId ||
+      stored.authRevision !== authNotificationRevision ||
       stored.workspaceKey !== resolveWebRemoteControlWorkspaceKey(context) ||
       stored.remoteSessionId !== context.remoteSessionId
     ) {
@@ -1490,6 +1499,7 @@ export function createWebRemoteControlManager(dependencies: WebRemoteControlMana
     async start(
       windowId: number,
       context: WebRemoteControlContext,
+      expectedIdentity?: WebRemoteControlStartupRestoreContext["identity"],
     ): Promise<WebRemoteControlStartResult> {
       clearStartAuthorizationsForWindow(windowId);
       dependencies.featureGate.assertEnabled();
@@ -1500,27 +1510,31 @@ export function createWebRemoteControlManager(dependencies: WebRemoteControlMana
       windowLifecycles.set(windowId, lifecycle);
       const signal = controller.signal;
       const assertActive = () => signal.throwIfAborted();
+      const authRevision = authNotificationRevision;
       try {
         await stopped;
-        const readAuthContext = async () => {
-          for (;;) {
-            const revision = authNotificationRevision;
-            const endpointUrls = await dependencies.getEndpointUrls?.();
-            const login = await dependencies.getLogin();
-            assertActive();
-            // 首次读取尚未绑定身份时也可能发生换号，不能把旧读取绑定到新登录之后。
-            if (revision === authNotificationRevision) return { endpointUrls, login };
-          }
-        };
-        const { endpointUrls, login } = await readAuthContext();
+        const endpointUrls = await dependencies.getEndpointUrls?.();
+        const login = await dependencies.getLogin();
         const relayWsUrl = endpointUrls?.relayWsUrl ?? dependencies.relayWsUrl;
         const mobileRemoteControlUrl =
           endpointUrls?.remoteUrl ?? dependencies.mobileRemoteControlUrl;
         const endpointOrigin = new URL(endpointUrls?.origin ?? mobileRemoteControlUrl).origin;
         assertActive();
+        // 旧目录开启请求不能在换号通知后改用新身份继续，即使首次读取尚未绑定 lifecycle。
+        if (authRevision !== authNotificationRevision)
+          throw new WebRemoteControlV2ConnectionError("auth-required");
         if (!login?.jwt || !login.userId) {
           requireAuthentication(windowId);
           throw new WebRemoteControlV2ConnectionError("auth-required");
+        }
+        if (
+          expectedIdentity &&
+          (expectedIdentity.version !== 1 ||
+            expectedIdentity.userId !== login.userId ||
+            expectedIdentity.endpointOrigin !== endpointOrigin)
+        ) {
+          await stopWindowRuntime(windowId, "startup-restore-identity-mismatch");
+          throw new Error("Web remote control startup identity mismatch");
         }
         lifecycle.identity = { userId: login.userId, endpointOrigin };
         const effectiveDeviceMid = login.deviceMid ?? dependencies.deviceMid;
@@ -1535,7 +1549,8 @@ export function createWebRemoteControlManager(dependencies: WebRemoteControlMana
           if (
             !current?.jwt ||
             current.userId !== login.userId ||
-            (endpoint && endpoint.origin !== endpointOrigin)
+            (current.deviceMid ?? dependencies.deviceMid) !== effectiveDeviceMid ||
+            new URL(endpoint?.origin ?? mobileRemoteControlUrl).origin !== endpointOrigin
           ) {
             throw new WebRemoteControlV2ConnectionError("auth-required");
           }
@@ -1659,10 +1674,14 @@ export function createWebRemoteControlManager(dependencies: WebRemoteControlMana
               mapTransportState(runtime, state);
               if (state === "waiting_terminal" || state === "paired") {
                 // 首个调用超时不撤销后台恢复；首次真正 ready 时仍须保存启用意图。
-                persistEnabled ??= dependencies.startupRestoreStorageProvider.save({
-                  workspacePath: context.workspacePath,
-                  workspaceIdentity: context.workspaceIdentity,
-                  initialTaskId: context.initialTaskId,
+                persistEnabled ??= withStartupRestoreStorage(async () => {
+                  assertActive();
+                  await dependencies.startupRestoreStorageProvider.save({
+                    workspacePath: context.workspacePath,
+                    workspaceIdentity: context.workspaceIdentity,
+                    initialTaskId: context.initialTaskId,
+                    identity: { version: 1, userId: login.userId, endpointOrigin },
+                  });
                 });
                 void persistEnabled.then(
                   () => finish(),
@@ -1762,8 +1781,12 @@ export function createWebRemoteControlManager(dependencies: WebRemoteControlMana
       clearStartAuthorizationsForWindow(windowId);
       // Bugfix: 清除自动恢复设置需要写磁盘，失败时不能阻止用户关闭当前远控连接。
       // 先释放 transport 和 attachment，再把持久化错误返回 UI，保证本次运行立即停止。
-      await stopWindowRuntime(windowId, "manual-stop");
-      await dependencies.startupRestoreStorageProvider.clear();
+      const stopped = stopWindowRuntime(windowId, "manual-stop");
+      const cleared = withStartupRestoreStorage(() =>
+        dependencies.startupRestoreStorageProvider.clear(),
+      );
+      await stopped;
+      await cleared;
     },
 
     async suspend(windowId: number, reason: string): Promise<void> {
@@ -1788,9 +1811,9 @@ export function createWebRemoteControlManager(dependencies: WebRemoteControlMana
           .origin;
         const staleWindows = [...windowLifecycles].filter(
           ([, lifecycle]) =>
-            lifecycle.identity &&
-            (lifecycle.identity.userId !== login.userId ||
-              lifecycle.identity.endpointOrigin !== endpointOrigin),
+            !lifecycle.identity ||
+            lifecycle.identity.userId !== login.userId ||
+            lifecycle.identity.endpointOrigin !== endpointOrigin,
         );
         if (staleWindows.length > 0) {
           lifecycleRevision += 1;
@@ -1826,6 +1849,7 @@ export function createWebRemoteControlManager(dependencies: WebRemoteControlMana
         clearStartAuthorizationsForWindow(id);
         requireAuthentication(id);
       }
+      await withStartupRestoreStorage(() => dependencies.startupRestoreStorageProvider.clear());
     },
 
     async restorePreviouslyEnabled(
@@ -1846,6 +1870,8 @@ export function createWebRemoteControlManager(dependencies: WebRemoteControlMana
       if (startupRestoreClaimed || runtimes.has(windowId) || authRequiredWindows.has(windowId))
         return false;
       const revision = lifecycleRevision;
+      const authRevision = authNotificationRevision;
+      await startupRestoreWrites;
       const persistedContext = await dependencies.startupRestoreStorageProvider
         .load()
         .catch((error) => {
@@ -1855,7 +1881,13 @@ export function createWebRemoteControlManager(dependencies: WebRemoteControlMana
           );
           return undefined;
         });
-      if (revision !== lifecycleRevision || startupRestoreClaimed || !persistedContext) {
+      if (
+        revision !== lifecycleRevision ||
+        authRevision !== authNotificationRevision ||
+        startupRestoreClaimed ||
+        !persistedContext?.identity ||
+        persistedContext.identity.version !== 1
+      ) {
         return false;
       }
 
@@ -1878,12 +1910,16 @@ export function createWebRemoteControlManager(dependencies: WebRemoteControlMana
         `[web-remote-control] restoring previous enabled state window=${windowId} workspace=${currentContext.workspacePath} remoteSession=${currentContext.remoteSessionId ?? "none"}`,
       );
       try {
-        await this.start(windowId, {
-          workspacePath: currentContext.workspacePath,
-          workspaceIdentity: currentContext.workspaceIdentity,
-          remoteSessionId: currentContext.remoteSessionId,
-          initialTaskId: persistedContext.initialTaskId,
-        });
+        await this.start(
+          windowId,
+          {
+            workspacePath: currentContext.workspacePath,
+            workspaceIdentity: currentContext.workspaceIdentity,
+            remoteSessionId: currentContext.remoteSessionId,
+            initialTaskId: persistedContext.initialTaskId,
+          },
+          persistedContext.identity,
+        );
         return true;
       } catch (error) {
         if (revision === lifecycleRevision) startupRestoreClaimed = false;

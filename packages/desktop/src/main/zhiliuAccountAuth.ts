@@ -538,9 +538,14 @@ export function createZhiliuAccountAuth(options: ZhiliuAccountAuthOptions) {
     if (record) await revokeZhiliuRuntimeGrant(record, grantId, http);
   };
   const authorizeRelay = async () => {
+    const requestedEpoch = generation;
     if (invalidationCleanup) await invalidationCleanup;
     if (logoutPromise) await logoutPromise;
-    if ((await validate(false)).phase !== "authenticated" || !current) return undefined;
+    if (requestedEpoch !== generation) return undefined;
+    const state = await validate(false);
+    // validate 等待期间可能已退出并重新登录；旧调用不能为新账号或新空间发行授权。
+    if (requestedEpoch !== generation || state.phase !== "authenticated" || !current)
+      return undefined;
     if (relayGrant && Date.parse(relayGrant.expires_at) > now() + 30000) return relayGrant;
     if (relayStarting) return relayStarting;
     const record = current,

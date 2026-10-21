@@ -22,16 +22,16 @@
 
 所有端点位于 `/api/desktop-auth`。使用现有 User、Space、AuthSession、RegisteredDevice，新增授权/登录 grant/单次 bootstrap 记录；AuthSession 增加可空 `desktop_login_grant_id`。native grant 关联独立 AuthSession，用 opaque `login_token` 仅访问以下窄接口，不接受它访问普通业务 API。
 
-| 路径 | 行为 |
-|---|---|
-| POST /authorizations | `{name,platform,public_key,code_challenge}` → `{authorization_id,device_code,user_code,expires_at,poll_interval_seconds,verification_path}`，10 分钟有效 |
-| GET /authorizations/{id} | 正常网页 Bearer 预览客户端、核对码、状态；不暴露 device_code/PKCE |
-| POST /authorizations/{id}/approve | 网页 Bearer + `{user_code}`，批准当前账号/空间；批准不同身份冲突 |
-| POST /exchange | `{authorization_id,device_code,code_verifier,signature}`；签名原文 `zhiliu-login-exchange\n{id}\n{device_code}\n{verifier}`。pending 为 409 `authorization_pending`；成功返回 `{login_token,device_id,user_id,space_id,expires_at,user,space}` |
-| GET /session | `Bearer dl_...`，实时校验登录、成员和设备，返回身份/期限，不含上游信息 |
-| POST /bootstrap | 同上，返回 `{ticket,expires_at}`，绑定该 grant，60 秒 |
-| POST /bootstrap/exchange | `{ticket}`，一次性消费，签发关联 grant 的独立标准 SaaS TokenResponse；Cache-Control: no-store |
-| POST /logout | `Bearer dl_...`，幂等撤销 grant/root session/关联网页会话，并撤销同设备 Host grant、清空设备在线与目录就绪状态 |
+| 路径                              | 行为                                                                                                                                                                                                                                           |
+| --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| POST /authorizations              | `{name,platform,public_key,code_challenge}` → `{authorization_id,device_code,user_code,expires_at,poll_interval_seconds,verification_path}`，10 分钟有效                                                                                       |
+| GET /authorizations/{id}          | 正常网页 Bearer 预览客户端、核对码、状态；不暴露 device_code/PKCE                                                                                                                                                                              |
+| POST /authorizations/{id}/approve | 网页 Bearer + `{user_code}`，批准当前账号/空间；批准不同身份冲突                                                                                                                                                                               |
+| POST /exchange                    | `{authorization_id,device_code,code_verifier,signature}`；签名原文 `zhiliu-login-exchange\n{id}\n{device_code}\n{verifier}`。pending 为 409 `authorization_pending`；成功返回 `{login_token,device_id,user_id,space_id,expires_at,user,space}` |
+| GET /session                      | `Bearer dl_...`，实时校验登录、成员和设备，返回身份/期限，不含上游信息                                                                                                                                                                         |
+| POST /bootstrap                   | 同上，返回 `{ticket,expires_at}`，绑定该 grant，60 秒                                                                                                                                                                                          |
+| POST /bootstrap/exchange          | `{ticket}`，一次性消费，签发关联 grant 的独立标准 SaaS TokenResponse；Cache-Control: no-store                                                                                                                                                  |
+| POST /logout                      | `Bearer dl_...`，幂等撤销 grant/root session/关联网页会话，并撤销同设备 Host grant、清空设备在线与目录就绪状态                                                                                                                                 |
 
 授权预览与批准页 `/#/desktop-authorize?authorize={uuid}`；云窗接入页 `/#/desktop-session?ticket={opaque}`。普通网页登录密码/注册流程保持兼容，并严格保留批准页站内路由。
 
@@ -64,6 +64,36 @@ sequenceDiagram
 ```
 
 ## 验收
+
+### 2026-10-21 远控目录恢复的账号边界
+
+- `webRemoteControlManager` 仍是目录恢复、窗口 lifecycle 和 attachment 的唯一所有者；`zhiliuAccountAuth` 仍是凭据与 generation 的唯一所有者。复用既有 `restorePreviouslyEnabled → start → register/token → transport`，不新增任务队列或恢复服务。
+- 持久恢复目标增加可选非敏感 `identity: { version: 1, userId, endpointOrigin }`。织流 `userId` 来自已验证的 relay `principal_id = user_id:space_id`，因此账号、空间、服务 origin 必须同时精确匹配。JWT、relay grant、临时 remoteSessionId 不落盘。旧无 identity 设置可读，但必须重新明确开启目录后才可恢复，不能自动绑定给第一个登录者。
+- 同 principal 正常退出进程/重启可恢复；显式 signed-out 和手动停止立即撤销所有窗口，并通过 Main 目录设置写屏障清除恢复意图。401 暂时门禁保留已绑定目标，同 principal 重新验证后可恢复；跨账号/空间/服务不得继承。
+- 开启票据及启动绑定当前 auth revision；读取登录过程中发生账号通知，旧请求失败，不能用新身份继续旧目录授权。恢复目标的 expected identity 贯穿启动，避免读取设置之后的换号。缓存、single-flight 和异步 relay 发行结果必须在同一 account generation 返回，迟到结果不得交给 relay。
+- manager 内目录设置的 Promise 写屏障只排序原 storage port 的 save/clear，不接受任务；原 registration queue 保留。两者不能互等：register 的 getLogin 可能因 401 进入账号失效清理，若清理再等待 registration 就会重入死锁。先同步 abort，后将 clear 排在已开始的 save 之后。新 save 在实际写入前检查 lifecycle；不能出现 logout clear 后旧 save 写回。读设置的 restore 等待目录写屏障，并复核 lifecycle/auth revision。
+
+```mermaid
+sequenceDiagram
+  participant A as Main账号所有者
+  participant M as 远控manager
+  participant P as Main目录设置写屏障
+  participant R as Relay/Host
+  M->>A: 读取当前principal+origin
+  A-->>M: 同generation有效grant
+  M->>M: expected identity精确匹配
+  M->>R: 原有register/token/connect
+  R-->>M: ready
+  M->>P: 保存绑定身份的目录意图
+  A->>M: signed-out / 授权撤销
+  M->>R: 同步abort所有旧lifecycle/attachment
+  M->>P: 排在已开始save后的clear
+  P-->>M: 清除完成
+  R-->>M: 迟到ready/token
+  M->>M: 丢弃旧代结果，不恢复
+```
+
+新增验收：旧无绑定记录拒绝恢复；同 principal 重启恢复；换账号、同用户换空间、换 origin 不自动启动；首次身份读取/续签/保存期间退出不复活；已配对连接换号全部撤销；新账号明确开启后能使用原有 relay 路径；共享 settings 的完整及 patch schema 保留 identity 且不接受未知版本。
 
 1. 浏览器已登录与未登录两条链；客户端不呈现密码或模型Key输入。
 2. 错误PKCE/签名/核对码、过期、同code并发交换只允许一次成功，跨用户/空间隔离。

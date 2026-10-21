@@ -164,6 +164,13 @@ const webRemoteControlLastEnabledContextSchema = z.object({
   workspacePath: nonEmptyStringSchema,
   workspaceIdentity: nonEmptyStringSchema.optional(),
   initialTaskId: nonEmptyStringSchema.optional(),
+  identity: z
+    .object({
+      version: z.literal(1),
+      userId: nonEmptyStringSchema,
+      endpointOrigin: z.url(),
+    })
+    .optional(),
 });
 const zcodeEndpointOriginSchema = z.preprocess((value) => {
   if (typeof value !== "string") {

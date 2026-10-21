@@ -433,11 +433,12 @@ export interface AppSettings {
   webRemoteControlExternalRelayDevice?: {
     deviceSid: string;
   };
-  /** 上次成功开启 Web 远控时的目标；缺失表示用户已明确关闭，不自动恢复。 */
+  /** 上次成功开启 Web 远控时的目标；旧无 identity 记录可读但不得自动恢复。 */
   webRemoteControlLastEnabledContext?: {
     workspacePath: string;
     workspaceIdentity?: string;
     initialTaskId?: string;
+    identity?: { version: 1; userId: string; endpointOrigin: string };
   };
   /** 设置页里的临时 endpoint override；正式/测试默认 base url 由 ZCODE_BASE_URL env 管理。 */
   zcodeEndpointOrigin?: string;

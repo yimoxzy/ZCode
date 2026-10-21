@@ -509,6 +509,7 @@ describe("createWebRemoteControlManager external relay", () => {
     });
 
     expect(getStartupRestoreContext()).toEqual({
+      identity: { version: 1, userId: "user", endpointOrigin: "https://zcode.z.ai" },
       workspacePath: "/workspace/demo",
       workspaceIdentity: "remote:ssh:host:/workspace/demo",
       initialTaskId: "task-1",
@@ -516,6 +517,7 @@ describe("createWebRemoteControlManager external relay", () => {
 
     await manager.suspend(1, "endpoint-changed");
     expect(getStartupRestoreContext()).toEqual({
+      identity: { version: 1, userId: "user", endpointOrigin: "https://zcode.z.ai" },
       workspacePath: "/workspace/demo",
       workspaceIdentity: "remote:ssh:host:/workspace/demo",
       initialTaskId: "task-1",
@@ -530,6 +532,7 @@ describe("createWebRemoteControlManager external relay", () => {
 
     await manager.disposeWindow(1);
     expect(getStartupRestoreContext()).toEqual({
+      identity: { version: 1, userId: "user", endpointOrigin: "https://zcode.z.ai" },
       workspacePath: "/workspace/demo",
       workspaceIdentity: "remote:ssh:host:/workspace/demo",
       initialTaskId: "task-1",
@@ -556,6 +559,7 @@ describe("createWebRemoteControlManager external relay", () => {
   it("restores the previous target only after its current workspace context is available", async () => {
     const { getStartupRestoreContext, getLatestTransportOptions, manager } = createManagerHarness({
       startupRestoreContext: {
+        identity: { version: 1, userId: "user", endpointOrigin: "https://zcode.z.ai" },
         workspacePath: "/workspace/demo",
         workspaceIdentity: "remote:ssh:host:/workspace/demo",
         initialTaskId: "task-1",
@@ -587,6 +591,7 @@ describe("createWebRemoteControlManager external relay", () => {
     );
     expect(getLatestTransportOptions()).toBeDefined();
     expect(getStartupRestoreContext()).toEqual({
+      identity: { version: 1, userId: "user", endpointOrigin: "https://zcode.z.ai" },
       workspacePath: "/workspace/demo",
       workspaceIdentity: "remote:ssh:host:/workspace/demo",
       initialTaskId: "task-1",
