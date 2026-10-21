@@ -950,6 +950,7 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
     });
     scheduleStartupLogRetentionCleanup(loggerFactory, logger);
     const inputFacade = createInputFacade({
+      requireAttachmentPersistence: options.managedRuntimeProfile !== undefined,
       cliDefaultSelection,
       artifactStore,
       customCommandPromptResolver: async (text, resolverOptions) => {

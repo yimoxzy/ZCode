@@ -46,12 +46,16 @@ export async function externalizePromptAttachments(
     artifactStore?: ToolArtifactStorePort;
     sessionId: SessionId;
     traceContext: TraceContext;
+    requirePersistence?: boolean;
   },
 ): Promise<TurnAttachment[] | undefined> {
   const externalized = await Promise.all(
     (attachments ?? []).map(async (attachment, index): Promise<TurnAttachment> => {
       if (!isInlineImageAttachment(attachment)) return attachment;
-      if (!options.artifactStore) return attachmentWithoutInlineContent(attachment);
+      if (!options.artifactStore) {
+        if (options.requirePersistence) throw new Error("Managed prompt attachment persistence failed");
+        return attachmentWithoutInlineContent(attachment);
+      }
 
       try {
         const artifact = await options.artifactStore.writeToolResultArtifact({
@@ -63,11 +67,18 @@ export async function externalizePromptAttachments(
           toolName: `prompt-attachment:${attachment.type}`,
           trace: options.traceContext,
         });
+        const sessionArtifactPrefix = `zcode-artifact://${encodeURIComponent(options.sessionId)}/`;
+        if (options.requirePersistence && (!artifact.uri.startsWith(sessionArtifactPrefix) ||
+          artifact.uri.length === sessionArtifactPrefix.length || /[/?#\s]/u.test(artifact.uri.slice(sessionArtifactPrefix.length)))) {
+          throw new Error("Managed prompt attachment persistence failed");
+        }
         return {
           ...attachment,
           content: artifact.uri,
         };
       } catch {
+        // 托管请求丢图后继续纯文本推理会误导用户并错误计费，必须在执行前终止。
+        if (options.requirePersistence) throw new Error("Managed prompt attachment persistence failed");
         return attachmentWithoutInlineContent(attachment);
       }
     }),

@@ -7,4 +7,5 @@ export const managedRuntimeExample: ZhiliuManagedRuntimeProfile = {
   protocol: "chat_completions",
   maxContextTokens: 32768,
   maxOutputTokens: 2048,
+  supportsImage: false,
 };

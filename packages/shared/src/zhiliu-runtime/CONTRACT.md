@@ -1,5 +1,8 @@
 # 可信 CLI 启动合同
 
+可选 `supportsImage` 由冻结 Profile 决定模型能力。显式 false 禁图；缺省仅兼容旧桌面 Profile 的历史
+true 行为。新 version 2 图片帧必须显式 true，不能用缺省当授权；云端当前显式 false。
+
 `zhiliuManagedRuntimeProfileSchema` 校验 Host stdin 首行。只有本机 capability，无平台登录凭据或上游信息。原 V4 业务 RPC 不能改变该 profile。协议、限制来自平台，工具未限制时保留桌面原能力；云端必须显式提供空工具与空插件根。参见 `specs/zhiliu-managed-runtime.md`。
 
 platformTools 是可选可信 `/mcp` 本机工具桥，capability 必须与模型 capability 不同；server 固定为 zhiliu_platform。工具凭证由 closure transport 注入，不进入 MCP 配置。工具身份元数据只供幂等，服务端仍用授权 Run/lease epoch 校验权限。活跃进程 await 不承诺跨进程冷恢复。

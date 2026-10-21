@@ -1,4 +1,5 @@
 import type { ToolSearchMode } from "@zcode/contracts";
+import type { PromptInput } from "@zcode/bootstrap";
 import { createCliProviderRefreshReporter } from "./provider-runtime-env.js";
 import { extname } from "node:path";
 import { formatJson, type PresentationSurface } from "@zcode/core";
@@ -69,7 +70,7 @@ const TARGET_SELECTION_UNAVAILABLE_ERROR =
 
 export const runPrompt = async (
   ctx: RunContext,
-  prompt: string,
+  input: PromptInput,
   attachmentPaths: string[],
   options: GlobalOptions,
   deps: RunDependencies,
@@ -82,6 +83,7 @@ export const runPrompt = async (
   presentationSurface: PresentationSurface = "terminal",
   workflowMode: DynamicWorkflowMode = DEFAULT_CLI_WORKFLOW_MODE,
 ): Promise<number> => {
+  const prompt = typeof input === "string" ? input : input.text;
   if (prompt.trim().length === 0) {
     ctx.stderr.write(`${EMPTY_PROMPT_ERROR}\n`);
     return 1;
@@ -328,14 +330,15 @@ export const runPrompt = async (
     const subscribeEvents = readRuntimeEventSubscriber(app.runtime);
     detachEvents = subscribeEvents?.({ onSessionEvent: observer.observe });
     const runtimeFacts = readHeadlessRuntimeFacts(app.runtime);
+    const attachments = [
+      ...(typeof input === "string" ? [] : input.attachments ?? []),
+      ...attachmentPaths.map((path) => ({type: inferAttachmentTypeFromPath(path), path})),
+    ];
     const result = await app.submitPrompt(
-      attachmentPaths.length > 0
+      attachments.length > 0
         ? {
             text: runtimePrompt,
-            attachments: attachmentPaths.map((path) => ({
-              type: inferAttachmentTypeFromPath(path),
-              path,
-            })),
+            attachments,
           }
         : runtimePrompt,
       {

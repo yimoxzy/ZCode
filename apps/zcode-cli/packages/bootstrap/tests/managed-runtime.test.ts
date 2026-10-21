@@ -55,6 +55,14 @@ describe("managed runtime startup", () => {
     } finally { runtime.dispose(); }
   });
 
+  it.each([true, false, undefined])("uses the frozen image capability %s with legacy compatibility", async (supportsImage) => {
+    const runtime = await createManagedProcessProviderRuntime({...profile, supportsImage});
+    try {
+      expect(runtime.runtime.registryService.getModel("zhiliu-managed", "zhiliu-managed")?.config.properties.inputFormat.supportsImage)
+        .toBe(supportsImage ?? true);
+    } finally { runtime.dispose(); }
+  });
+
   it("appends persona as instruction material while approved empty roots suppress local discovery", async () => {
     const base = {resolveContextSources: vi.fn(async (request) => ({...request, envInfo: {}, diagnostics: []}))};
     const source = createManagedContextSource(base as never, {...profile, instructions: "平台 persona", pluginManifest: {roots: []}});

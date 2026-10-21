@@ -12,6 +12,52 @@ stdin 第一行是 `ZhiliuManagedRuntimeProfile` JSON；仅启动时读取一次
 `--prompt-stdin` 第二行是 `{ "text": "用户需求" }`，用户正文与 capability 不进入 argv。
 凭据只在内存；不写环境变量、配置文件、会话元数据、stdout 或日志。
 
+### 版本 2 图片输入（受控传输，尚未开放云图片准入）
+
+旧 `{text}` 帧仍返回原字符串；图片帧为严格的
+`{version:2,text:"用户需求",images:[{mediaType:"image/png",data:"<canonical base64>"}]}`。
+`mediaType` 只接受 PNG/JPEG；不接受 URL、路径、data URL、文件名或额外字段。
+`text` 必须非空，图片数量 1–4，decoded 合计不超过 4 MiB，整条 UTF-8 NDJSON 行不超过
+6 MiB（首行 Profile 仍是 1 MiB）。单图边长不超过 8192、像素不超过 16,000,000，
+合计像素不超过 32,000,000。先以真实 magic 和 PNG IHDR / JPEG SOF0、SOF2 检查尺寸，
+全部图片通过预算后，再逐个复用既有 ImageProcessorPort 解码；不能只凭扩展名或声明的 MIME
+接纳。WebP 的现有实现是透传，尚不能作为真实解码验证，因此本版本拒绝 WebP。
+
+只有可信启动 Profile 显式 `supportsImage:true` 才接纳版本 2；false 或缺省在读取帧时失败，
+不会继续发送纯文本模型请求。模型目录从同一个冻结 Profile 读取 image capability：显式 false
+关闭、true 开启；缺省只为旧桌面 Profile 保留历史 true 行为，不是新授权。生产云端本批显式 false，
+历史、重新生成及新图片准入仍关闭，必须完成视觉上下文预算验收后另行灰度。
+
+唯一输入路径是 stdin reader → 原有 `PromptInput` / `TurnAttachment` → input facade →
+artifact store → 原有 Core 图片 content block → 原有模型 adapter。Reader 不取得宿主文件/网络权限，
+不创建新会话、队列、模型请求或图片存储。托管模式 externalize 失败（缺 store、写失败或返回非法
+artifact URI）必须在 executeTurn 前失败，不能移除 content 继续。普通本地模式保留已有兼容行为。
+
+```mermaid
+sequenceDiagram
+  participant W as 可信 Worker
+  participant C as CLI stdin reader
+  participant F as 既有 input facade
+  participant A as Artifact store
+  participant R as 原有 Agent Runtime
+  W->>C: Profile 后跟 version 2 图片帧
+  C->>C: capability / shape / bytes / pixels / decoder
+  C->>F: PromptInput + TurnAttachment[]
+  F->>A: externalize inline data
+  alt 外部化失败
+    A-->>F: error
+    F-->>W: 执行失败（不调用模型）
+  else 成功
+    A-->>F: durable artifact URI
+    F->>R: executeTurn(text, artifact attachments)
+    R->>A: 读取原有 artifact
+    R->>R: 原有 image content block 与模型推理
+  end
+```
+
+验收覆盖旧帧、分片/同 chunk 后续帧、显式能力、伪造格式、损坏图片、压缩炸弹预算、数量及字节
+上限、artifact 失败、受控真实 CLI 到两种模型协议图片 block。受控测试不代表生产图片已可用。
+
 Profile 由平台授权的 Host 生成：version=1，loopback gatewayBaseUrl，随机 capabilityToken，
 modelId 固定 zhiliu-managed，protocol 为 responses 或 chat_completions，模型上下文/输出限额，
 reasoningEffort，以及可选 instructions、pluginManifest.roots 和 toolAllowlist。

@@ -33,7 +33,8 @@ export async function createManagedProcessProviderRuntime(profile: ZhiliuManaged
     enabled: true,
     properties: new ModelPropertiesConfig({
       requiresMfjsToolSchema: false, contextWindow: profile.maxContextTokens,
-      inputFormat: { supportsText: true, supportsImage: true, supportsVideo: false,
+      // 缺省只兼容旧桌面 profile；新的 v2 图片准入仍要求显式 true。
+      inputFormat: { supportsText: true, supportsImage: profile.supportsImage ?? true, supportsVideo: false,
         supportsAudio: false, supportsPdf: false },
       outputFormat: { supportsText: true }, supportsToolCall: true,
       supportsJsonSchemaOutput: true, supportsNativeWebSearch: false,

@@ -361,6 +361,7 @@ export const run = async (ctx: RunContext, deps: RunDependencies = {}): Promise<
 
   let parsed: ReturnType<typeof parseGlobalArgs>;
   let toolDisallowlist: readonly string[] | undefined;
+  let managedPrompt: Awaited<ReturnType<typeof readManagedPrompt>> | undefined;
 
   try {
     const extracted = extractDisallowedToolsArgs(ctx.argv);
@@ -373,7 +374,8 @@ export const run = async (ctx: RunContext, deps: RunDependencies = {}): Promise<
       deps = { ...deps, managedRuntimeProfile: await readManagedRuntimeProfile(input), skipUserConfig: true };
       if (parsed.values["prompt-stdin"]) {
         if (parsed.values.prompt || command) throw new Error("--prompt-stdin conflicts with prompt or protocol server");
-        parsed.values.prompt = await readManagedPrompt(input);
+        managedPrompt = await readManagedPrompt(input, deps.managedRuntimeProfile);
+        parsed.values.prompt = typeof managedPrompt === "string" ? managedPrompt : managedPrompt.text;
       }
       if (!parsed.values.prompt && !command) throw new Error("Managed headless execution requires a prompt");
     } else if (parsed.values["prompt-stdin"]) throw new Error("--prompt-stdin requires --managed-profile-stdin");
@@ -579,7 +581,7 @@ export const run = async (ctx: RunContext, deps: RunDependencies = {}): Promise<
   if (typeof parsed.values.prompt === "string") {
     return await runPrompt(
       ctx,
-      parsed.values.prompt,
+      managedPrompt ?? parsed.values.prompt,
       parsed.values.attach ?? [],
       options,
       commandDeps,

@@ -43,6 +43,7 @@ type InputFacade = Pick<
 interface CreateInputFacadeDeps {
   cliDefaultSelection?: CliDefaultSelection;
   artifactStore?: ToolArtifactStorePort;
+  requireAttachmentPersistence?: boolean;
   customCommandPromptResolver?: (
     text: string,
     options?: Pick<SubmitPromptOptions, "abortSignal" | "traceContext">,
@@ -103,6 +104,7 @@ export function createInputFacade(deps: CreateInputFacadeDeps): InputFacade {
     options?: SubmitPromptOptions,
   ): Promise<TurnResult> => {
     const storedAttachments = await externalizePromptAttachments(promptInput.attachments, {
+      requirePersistence: deps.requireAttachmentPersistence,
       artifactStore: deps.artifactStore,
       sessionId: deps.sessionId,
       traceContext: options?.traceContext ?? deps.traceContext,
@@ -147,6 +149,7 @@ export function createInputFacade(deps: CreateInputFacadeDeps): InputFacade {
     options?: SubmitPromptOptions,
   ): Promise<{ input: string; storedAttachments?: TurnAttachment[] }> => {
     const storedAttachments = await externalizePromptAttachments(promptInput.attachments, {
+      requirePersistence: deps.requireAttachmentPersistence,
       artifactStore: deps.artifactStore,
       sessionId: deps.sessionId,
       traceContext: options?.traceContext ?? deps.traceContext,
@@ -185,6 +188,7 @@ export function createInputFacade(deps: CreateInputFacadeDeps): InputFacade {
     recordInputHistory: async (input, kind = "slash_command") => {
       const promptInput = normalizePromptInput(input);
       const attachments = await externalizePromptAttachments(promptInput.attachments, {
+        requirePersistence: deps.requireAttachmentPersistence,
         artifactStore: deps.artifactStore,
         sessionId: deps.sessionId,
         traceContext: deps.traceContext,

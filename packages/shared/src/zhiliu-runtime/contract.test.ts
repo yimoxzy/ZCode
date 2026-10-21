@@ -2,6 +2,12 @@ import { describe, expect, it } from "vitest";
 import { zhiliuManagedRuntimeProfileSchema } from "./contract.js";
 import { managedRuntimeExample } from "./contract.example.js";
 describe("可信托管运行时profile", () => {
+  it("image capability is an optional boolean with no implicit new authorization", () => {
+    for (const supportsImage of [true, false, undefined]) {
+      expect(zhiliuManagedRuntimeProfileSchema.parse({...managedRuntimeExample, supportsImage}).supportsImage).toBe(supportsImage);
+    }
+    expect(zhiliuManagedRuntimeProfileSchema.safeParse({...managedRuntimeExample, supportsImage: "true"}).success).toBe(false);
+  });
   it("单次审批工具必须为平台工具且属于可用工具清单", () => {
     const name = "mcp__zhiliu_platform__save_personal_memory";
     expect(

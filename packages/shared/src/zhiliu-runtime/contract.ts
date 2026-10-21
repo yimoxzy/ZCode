@@ -15,6 +15,8 @@ export const zhiliuManagedRuntimeProfileSchema = z
     protocol: z.enum(["responses", "chat_completions"]),
     maxContextTokens: z.number().int().positive().max(10000000),
     maxOutputTokens: z.number().int().positive().max(10000000),
+    /** Frozen capability; v2 inline-image input requires explicit true. */
+    supportsImage: z.boolean().optional(),
     reasoningEffort: z.string().min(1).max(40).nullable().optional(),
     instructions: z.string().max(200000).optional(),
     pluginManifest: z.object({ roots: z.array(z.string().min(1).max(4096)).max(100) }).strict().optional(),

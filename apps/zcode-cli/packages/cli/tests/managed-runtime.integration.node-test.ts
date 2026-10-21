@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 const entry = fileURLToPath(new URL("../dist/zcode.cjs", import.meta.url));
 const capability = "local_capability_test_123456789012345678901";
 const toolCapability = "independent_tool_capability_12345678901234567890";
+const imageData = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC";
 
 async function assertNoCredentialsOnDisk(root: string): Promise<void> {
   for (const entry of await readdir(root, {withFileTypes: true})) {
@@ -27,7 +28,7 @@ function chunk(res: ServerResponse, delta: unknown, finish_reason: string | null
     model: "zhiliu-managed", choices: [{index: 0, delta, finish_reason}]})}\n\n`);
 }
 
-for (const scenario of ["tool-loop", "platform-tool", "platform-failure", "platform-approval-denied", "no-tools", "responses", "rejected", "partial-failure"] as const) {
+for (const scenario of ["tool-loop", "platform-tool", "platform-failure", "platform-approval-denied", "no-tools", "responses", "image-chat", "image-responses", "rejected", "partial-failure"] as const) {
   test(`managed CLI process: ${scenario}`, {timeout: 90000}, async (t) => {
     const root = await mkdtemp(join(tmpdir(), "zhiliu-managed-cli-"));
     const fixture = join(root, "example.txt");
@@ -63,7 +64,7 @@ for (const scenario of ["tool-loop", "platform-tool", "platform-failure", "platf
         res.writeHead(200, {"content-type": "application/json"}); res.end(JSON.stringify({jsonrpc: "2.0", id: body.id, result})); return;
       }
       requests.push({body, headers: req.headers});
-      if (scenario === "responses") {
+      if (scenario === "responses" || scenario === "image-responses") {
         assert.equal(body.store, false);
         res.writeHead(200, {"content-type": "text/event-stream"});
         const item = {id: "msg_managed", type: "message", role: "assistant", status: "completed",
@@ -106,7 +107,8 @@ for (const scenario of ["tool-loop", "platform-tool", "platform-failure", "platf
     await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
     const address = server.address(); assert.ok(address && typeof address !== "string");
     const profile = {version: 1, gatewayBaseUrl: `http://127.0.0.1:${address.port}/v1`, capabilityToken: capability,
-      modelId: "zhiliu-managed", protocol: scenario === "responses" ? "responses" : "chat_completions", maxContextTokens: 128000, maxOutputTokens: 4096,
+      modelId: "zhiliu-managed", protocol: scenario === "responses" || scenario === "image-responses" ? "responses" : "chat_completions", maxContextTokens: 128000, maxOutputTokens: 4096,
+      supportsImage: scenario.startsWith("image-"),
       instructions: "You are a managed assistant.", pluginManifest: {roots: []}, toolAllowlist: scenario === "tool-loop" ? ["Read"] : scenario.startsWith("platform-") ? ["mcp__zhiliu_platform__clarify"] : [],
       ...(scenario.startsWith("platform-") ? {platformTools: {url: `http://127.0.0.1:${address.port}/mcp`, capabilityToken: toolCapability, timeoutMs: 5000}} : {})};
     if (scenario === "platform-approval-denied") Object.assign(profile, {approvalRequiredTools: ["mcp__zhiliu_platform__clarify"]});
@@ -118,7 +120,10 @@ for (const scenario of ["tool-loop", "platform-tool", "platform-failure", "platf
     child.stdout.on("data", data => {stdout += data.toString();}); child.stderr.on("data", data => {stderr += data.toString();});
     const timer = setTimeout(() => child.kill(), 60000);
     try {
-      child.stdin.end(JSON.stringify(profile) + "\n" + JSON.stringify({text: "Read the sample if a tool is available, then finish."}) + "\n");
+      const prompt = scenario.startsWith("image-")
+        ? {version: 2, text: "Describe the attached image.", images: [{mediaType: "image/png", data: imageData}]}
+        : {text: "Read the sample if a tool is available, then finish."};
+      child.stdin.end(JSON.stringify(profile) + "\n" + JSON.stringify(prompt) + "\n");
       const code = await new Promise<number | null>((resolve, reject) => {child.once("exit", resolve); child.once("error", reject);});
       assert.ok(![stdout, stderr].some(output => output.includes(capability) || output.includes(toolCapability)), "capability must not appear in process output");
       assert.ok(requests.length > 0, `no model request; exit=${code} stderr=${stderr} stdout=${stdout.slice(-2000)}`);
@@ -148,6 +153,18 @@ for (const scenario of ["tool-loop", "platform-tool", "platform-failure", "platf
           type: event.type, payload: {kind: event.payload.kind, toolName: event.payload.toolName, toolCallId: event.payload.toolCallId}
         })))}`);
         if (scenario === "platform-tool") assert.ok(requests[1].body.messages.some((m: any) => m.role === "tool" && JSON.stringify(m).includes("confirmed enterprise context")));
+        assert.ok(stdout.includes("managed final answer"));
+      } else if (scenario.startsWith("image-")) {
+        assert.equal(code, 0, stderr); assert.equal(requests.length, 1);
+        const messages = scenario === "image-responses" ? requests[0].body.input : requests[0].body.messages;
+        const content = messages.filter((message: any) => message.role === "user")
+          .flatMap((message: any) => Array.isArray(message.content) ? message.content : []);
+        const images = content.filter((part: any) => part.type === (scenario === "image-responses" ? "input_image" : "image_url"));
+        assert.equal(images.length, 1, "one distinct provider-visible image part is required");
+        const dataUrl = scenario === "image-responses" ? images[0].image_url : images[0].image_url.url;
+        assert.equal(dataUrl, `data:image/png;base64,${imageData}`);
+        assert.deepEqual(Buffer.from(dataUrl.split(",")[1], "base64"), Buffer.from(imageData, "base64"), "tiny fixture must survive artifact and provider mapping byte-for-byte");
+        assert.ok(content.some((part: any) => (part.type === "text" || part.type === "input_text") && part.text.includes("Describe the attached image.")));
         assert.ok(stdout.includes("managed final answer"));
       } else if (scenario === "no-tools" || scenario === "responses") {
         assert.equal(code, 0, stderr); assert.ok(!requests[0].body.tools?.length); assert.ok(stdout.includes("managed final answer"));
