@@ -162,7 +162,8 @@ export async function createBotWorkerIntegration(baseUrl: string, dropTextContai
           ZCODE_PERSONAL_PROVIDER_CONFIG_FILE: personalFilePath,
         },
       }),
-      modelSelectionReadinessSource: modelSelectionService,
+      // 标准构建夹具使用全局上游目录；就绪读取不能把 workspace 当成 selection 输入。
+      modelSelectionReadinessSource: { getView: () => modelSelectionService.getView() },
       channelReplyExecutor: async (request) => {
         reverseReplies.push(request);
         return bot.service.replyToChannel!(request);

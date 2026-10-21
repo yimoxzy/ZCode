@@ -1,6 +1,15 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { isZCodeAgentProvider, ZCODE_AGENT_PROVIDER, type ZCodeProvider } from "@zcode/shared";
-import type { IModelSelectionService, ModelSelectionView } from "@zcode/services";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  isZCodeAgentProvider,
+  ZCODE_AGENT_PROVIDER,
+  ZHILIU_DESKTOP_ENABLED,
+  type ZCodeProvider,
+} from "@zcode/shared";
+import type {
+  IModelSelectionService,
+  ModelSelectionView,
+  ModelSelectionViewInput,
+} from "@zcode/services";
 import {
   buildModelConfigMissingUiError,
   type ModelConfigMissingUiError,
@@ -50,8 +59,22 @@ export function useDraftModelReadinessGate(params: {
   const workspaceKey = workspaceIdentity?.trim() || workspacePath;
   const displayProvider = provider ?? ZCODE_AGENT_PROVIDER;
   const enabled = sessionId === null && isZCodeAgentProvider(displayProvider);
+  const selectionInput = useMemo<ModelSelectionViewInput | undefined>(
+    () =>
+      ZHILIU_DESKTOP_ENABLED
+        ? {
+            selection: null,
+            workspace: { workspacePath, ...(workspaceIdentity ? { workspaceIdentity } : {}) },
+          }
+        : undefined,
+    [workspacePath, workspaceIdentity],
+  );
   const gateKey = `${workspaceKey}\u0000${displayProvider}`;
-  const scope = useMemo(() => ({ gateKey }), [enabled, gateKey, modelSelectionService]);
+  const scope = useMemo(
+    () => ({ gateKey }),
+    [enabled, gateKey, modelSelectionService, selectionInput],
+  );
+  const readinessEpoch = useRef(0);
   const [state, setState] = useState<DraftModelReadinessState>(() => ({
     scope,
     status: enabled ? "checking" : "ready",
@@ -88,6 +111,7 @@ export function useDraftModelReadinessGate(params: {
   );
 
   useEffect(() => {
+    readinessEpoch.current += 1;
     if (!enabled) {
       commitStatus("ready");
       return;
@@ -101,20 +125,29 @@ export function useDraftModelReadinessGate(params: {
       commitStatus(status);
     };
     const subscription = modelSelectionService.onDidChange((view) => {
+      readinessEpoch.current += 1;
       registryEventVersion += 1;
-      applyStatus(resolveModelSelectionReadinessStatus(view));
+      if (selectionInput) {
+        // 托管 Host 的公共事件只有失效语义，不能把别的工作区 ready 当作当前项目准入。
+        applyStatus("checking");
+        readCurrentView();
+      } else applyStatus(resolveModelSelectionReadinessStatus(view));
     });
-    const initialReadVersion = registryEventVersion;
-    void modelSelectionService
-      .getView()
-      .then((view) => {
-        // 读取在变更事件之前发起、之后才返回时，事件快照更新；禁止旧读取覆盖新状态。
-        if (registryEventVersion !== initialReadVersion) return;
-        applyStatus(resolveModelSelectionReadinessStatus(view));
-      })
-      .catch((error) => {
-        handleReadinessFailure(error);
-      });
+    readCurrentView();
+
+    function readCurrentView() {
+      const readVersion = registryEventVersion;
+      void modelSelectionService
+        .getView(selectionInput)
+        .then((view) => {
+          // 读取在变更事件之前发起、之后才返回时，事件快照更新；禁止旧读取覆盖新状态。
+          if (registryEventVersion !== readVersion) return;
+          applyStatus(resolveModelSelectionReadinessStatus(view));
+        })
+        .catch((error) => {
+          if (registryEventVersion === readVersion) handleReadinessFailure(error);
+        });
+    }
 
     function handleReadinessFailure(error: unknown) {
       if (disposed) return;
@@ -128,10 +161,11 @@ export function useDraftModelReadinessGate(params: {
     }
 
     return () => {
+      readinessEpoch.current += 1;
       disposed = true;
       subscription?.dispose();
     };
-  }, [commitStatus, enabled, modelSelectionService, workspaceKey]);
+  }, [commitStatus, enabled, modelSelectionService, workspaceKey, selectionInput]);
 
   const markProviderNotReady = useCallback(() => {
     commitStatus("missing", { revealMissing: true });
@@ -139,8 +173,11 @@ export function useDraftModelReadinessGate(params: {
 
   const ensureReadyForSend = useCallback(async (): Promise<boolean> => {
     if (!enabled) return true;
+    const requestEpoch = readinessEpoch.current;
     try {
-      const view = await modelSelectionService.getView();
+      const view = await modelSelectionService.getView(selectionInput);
+      // 授权/目标已换代的首发复查不能恢复旧 ready，也不能放行旧账号的发送。
+      if (readinessEpoch.current !== requestEpoch) return false;
       const status = resolveModelSelectionReadinessStatus(view);
       commitStatus(status, { revealMissing: status === "missing" });
       if (status === "missing") {
@@ -153,6 +190,7 @@ export function useDraftModelReadinessGate(params: {
       }
       return true;
     } catch (error) {
+      if (readinessEpoch.current !== requestEpoch) return false;
       // 与 mount 检查一致：读 registry 失败不冒充“没有模型”，继续由 Host 启动门禁裁决。
       commitStatus("check-failed");
       logger.warn("[v4-draft-readiness] 首发复查 provider registry 失败，回落 Host 门禁", {
@@ -161,7 +199,7 @@ export function useDraftModelReadinessGate(params: {
       });
       return true;
     }
-  }, [commitStatus, enabled, modelSelectionService, workspaceKey]);
+  }, [commitStatus, enabled, modelSelectionService, workspaceKey, selectionInput]);
 
   const error = useMemo(
     () =>

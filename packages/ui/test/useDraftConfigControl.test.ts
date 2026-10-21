@@ -70,6 +70,13 @@ function readImportInitialization(
 const { prepareWorkspaceMock } = vi.hoisted(() => ({
   prepareWorkspaceMock: vi.fn(),
 }));
+const managedFlags = vi.hoisted(() => ({ enabled: false }));
+vi.mock("@zcode/shared", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@zcode/shared")>()),
+  get ZHILIU_DESKTOP_ENABLED() {
+    return managedFlags.enabled;
+  },
+}));
 
 const { toastMock } = vi.hoisted(() => ({
   toastMock: vi.fn(),
@@ -255,6 +262,46 @@ function installMinimalDom() {
 }
 
 describe("useDraftConfigControl slash command hydration", () => {
+  it("托管 Composer 在同 Host 同别名切项目时读取对应 target，不沿用旧目录", async () => {
+    managedFlags.enabled = true;
+    const root = createRoot(installMinimalDom());
+    const pending: Array<(view: ModelSelectionView) => void> = [];
+    const getView = vi.fn(
+      () => new Promise<ModelSelectionView>((resolve) => pending.push(resolve)),
+    );
+    const service: IModelSelectionService = { getView, onDidChange: () => ({ dispose() {} }) };
+    let identity = "space:one";
+    let control!: ReturnType<typeof useActualDraftConfigControl>;
+    function Probe() {
+      control = useActualDraftConfigControl({
+        workspacePath: "/managed-shared",
+        workspaceIdentity: identity,
+        sessionId: null,
+        modelSelectionService: service,
+        agentStartupAllowed: false,
+      });
+      return null;
+    }
+    try {
+      await act(async () => root.render(createElement(Probe)));
+      await act(async () => pending[0]!(modelSelectionView(1, ["low"], "low")));
+      identity = "space:two";
+      await act(async () => root.render(createElement(Probe)));
+      expect(control.modelSelectionRead.state).toEqual({ status: "loading" });
+      expect(getView).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          workspace: {
+            workspacePath: "/managed-shared",
+            workspaceIdentity: "space:two",
+          },
+        }),
+      );
+    } finally {
+      act(() => root.unmount());
+      managedFlags.enabled = false;
+    }
+  });
+
   it.each([null, "existing-session"])(
     "repairs a saved managed draft and medium→low→high next-turn intent without resetting content or modes (%s)",
     async (sessionId) => {

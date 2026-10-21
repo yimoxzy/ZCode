@@ -5,7 +5,7 @@
 // Workspace presentation 水合只提供 mode 与 slash commands；模型候选、能力和首选值
 // 统一来自目标 Host ModelSelectionView。
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ZCODE_AGENT_PROVIDER, resolveExecutionState } from "@zcode/shared";
+import { ZCODE_AGENT_PROVIDER, ZHILIU_DESKTOP_ENABLED, resolveExecutionState } from "@zcode/shared";
 import type {
   ZCodeConfigOption,
   ModelSelection,
@@ -192,6 +192,9 @@ export function useDraftConfigControl(params: {
     "remote-waiting",
     {
       selection: draft.modelSelection ?? null,
+      ...(ZHILIU_DESKTOP_ENABLED
+        ? { workspace: { workspacePath, ...(workspaceIdentity ? { workspaceIdentity } : {}) } }
+        : {}),
     },
   );
   const modelSelectionView =

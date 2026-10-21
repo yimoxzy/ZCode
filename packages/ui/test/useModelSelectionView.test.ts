@@ -12,6 +12,61 @@ function view(revision: number, providerId: string): ModelSelectionView {
 }
 
 describe("useModelSelectionServiceView", () => {
+  it("同 Host 同别名切换 workspace identity 不保留别的项目目录，迟到结果不越界", async () => {
+    const pending: Array<(value: ModelSelectionView) => void> = [];
+    const getView = vi.fn(
+      () => new Promise<ModelSelectionView>((resolve) => pending.push(resolve)),
+    );
+    const service: IModelSelectionService = { getView, onDidChange: () => ({ dispose() {} }) };
+    const hook = renderHook(
+      ({ identity }) =>
+        useModelSelectionServiceView(service, true, "remote-waiting", {
+          selection: { providerId: "zhiliu-managed", modelId: "zhiliu-managed" },
+          workspace: { workspacePath: "/same", workspaceIdentity: identity },
+        }),
+      { initialProps: { identity: "space:one" } },
+    );
+    await act(async () => pending[0]!(view(1, "one-low")));
+    hook.rerender({ identity: "space:two" });
+    expect(hook.result.current.state).toEqual({ status: "loading" });
+    hook.rerender({ identity: "space:one" });
+    expect(hook.result.current.state).toEqual({ status: "loading" });
+    await act(async () => pending[2]!(view(2, "one-low")));
+    await act(async () => pending[1]!(view(9, "two-high")));
+    expect(hook.result.current.state).toEqual({ status: "ready", view: view(2, "one-low") });
+    expect(getView).toHaveBeenLastCalledWith({
+      selection: { providerId: "zhiliu-managed", modelId: "zhiliu-managed" },
+      workspace: { workspacePath: "/same", workspaceIdentity: "space:one" },
+    });
+  });
+
+  it("托管失效事件先移除旧 ready，再重读本项目；迟到旧账号读取不得恢复目录", async () => {
+    const pending: Array<(value: ModelSelectionView) => void> = [];
+    let changed!: (value: ModelSelectionView) => void;
+    const getView = vi.fn(
+      () => new Promise<ModelSelectionView>((resolve) => pending.push(resolve)),
+    );
+    const service: IModelSelectionService = {
+      getView,
+      onDidChange: (listener) => {
+        changed = listener;
+        return { dispose() {} };
+      },
+    };
+    const input = { selection: null, workspace: { workspacePath: "/one" } };
+    const hook = renderHook(() =>
+      useModelSelectionServiceView(service, true, "remote-waiting", input),
+    );
+    await act(async () => pending[0]!(view(1, "old-account")));
+    act(() => changed({ revision: 2, providers: [] }));
+    expect(hook.result.current.state).toEqual({ status: "loading" });
+    act(() => changed({ revision: 3, providers: [] }));
+    await act(async () => pending[2]!(view(3, "new-account")));
+    await act(async () => pending[1]!(view(2, "old-account")));
+    expect(hook.result.current.state).toEqual({ status: "ready", view: view(3, "new-account") });
+    expect(getView).toHaveBeenLastCalledWith(input);
+  });
+
   it("同 Host 调档或切模型保留纯目录，待解析状态不能冒充 ready，迟到结果不得覆盖", async () => {
     const reads: Array<(value: ModelSelectionView) => void> = [];
     const service: IModelSelectionService = {

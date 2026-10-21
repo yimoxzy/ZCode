@@ -38,7 +38,8 @@ export interface ManagedRuntimeTarget {
 }
 export interface ZhiliuManagedRuntimeAuthority {
   resolve(target: ManagedRuntimeTarget): Promise<ZhiliuManagedRuntimeProfile>;
-  readProfile(): ZhiliuManagedRuntimeProfile | undefined;
+  /** No target means no execution identity; never return the last active workspace. */
+  readProfile(target?: ManagedRuntimeTarget): ZhiliuManagedRuntimeProfile | undefined;
   onDidChange(listener: () => void): () => void;
   invalidate(): Promise<void>;
   invalidateWorkspace(workspaceIdentity: string): Promise<void>;

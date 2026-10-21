@@ -34,7 +34,7 @@ export interface ProviderRuntimeOptions extends ProviderConfigRuntimeOptions {
 }
 
 export interface ProviderRuntimeDependencies {
-  readonly configRuntime: ProviderConfigRuntime;
+  readonly configRuntime: Pick<ProviderConfigRuntime, keyof ProviderConfigRuntime>;
   readonly accountSource?: RefreshableProviderSource<AccountProviderConfigSnapshot>;
   readonly disposeAccountSource?: () => void;
   readonly testConnectivity?: ProviderSettingsConnectivityTester;
@@ -68,7 +68,7 @@ export class ProviderRuntime {
   readonly registryService: ProviderRegistryService;
   readonly providerSettings: IProviderSettingsService;
   readonly modelSelection: IModelSelectionService;
-  readonly #configRuntime: ProviderConfigRuntime;
+  readonly #configRuntime: ProviderRuntimeDependencies["configRuntime"];
   readonly #disposeAccountSource?: () => void;
   readonly #disposeBuiltinRecovery: () => void;
   readonly #modelSelectionRuntime: IModelSelectionService & { dispose(): void };
@@ -141,7 +141,7 @@ export class ProviderRuntime {
 }
 
 function createSettingsMutationTarget(
-  configRuntime: ProviderConfigRuntime,
+  configRuntime: ProviderRuntimeDependencies["configRuntime"],
   registryService: ProviderRegistryService,
   accountSource: RefreshableProviderSource<AccountProviderConfigSnapshot>,
 ): ProviderSettingsMutationTarget {

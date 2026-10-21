@@ -897,7 +897,9 @@ function providerRuntimeHeadersRequestKey(
  * 不能再把它扩张成 runtimeModel 并覆盖 Worker 的执行事实源。
  */
 interface ModelSelectionReadinessSource {
-  getView(): Promise<ModelSelectionView>;
+  getView(workspace?: ZCodeAgentWorkspaceTarget): Promise<ModelSelectionView>;
+  /** A change invalidates scoped projections; it cannot supply a global ready fact. */
+  workspaceScoped?: boolean;
   onDidChange?: (listener: (view: ModelSelectionView) => void) => IDisposable;
 }
 
@@ -1717,7 +1719,8 @@ export function createZCodeAgentService(
     reason: string;
     snapshot: ZCodeAgentProviderReadinessSnapshot;
   }): Promise<void> {
-    if (event.snapshot.readiness.ready) {
+    // 托管目录按工作区派生，全局事件只使旧结果失效；必须通过 getClient 重新读取该工作区。
+    if (event.snapshot.readiness.ready || modelSelectionReadinessSource?.workspaceScoped) {
       await Promise.allSettled(
         Array.from(waitingWorkspaceStartups.entries()).map(async ([workspaceKey, waiting]) => {
           // ready 事件可能赶在旧 readiness 读取返回前到达。先收口旧尝试，再读取新状态，
@@ -3286,12 +3289,12 @@ export function createZCodeAgentService(
     );
   }
 
-  async function resolveStartupReadiness(): Promise<
-    ZCodeAgentProviderReadinessSnapshot | undefined
-  > {
+  async function resolveStartupReadiness(
+    workspace: ZCodeAgentWorkspaceTarget,
+  ): Promise<ZCodeAgentProviderReadinessSnapshot | undefined> {
     if (modelSelectionReadinessSource) {
       return createProviderReadinessSnapshotFromSelectionView(
-        await modelSelectionReadinessSource.getView(),
+        await modelSelectionReadinessSource.getView(workspace),
       );
     }
     return undefined;
@@ -3456,7 +3459,7 @@ export function createZCodeAgentService(
     const workspaceKey = resolveWorkspaceKey(params);
     const active = activeClientsByWorkspaceKey.get(workspaceKey);
 
-    const readinessSnapshot = await resolveStartupReadiness();
+    const readinessSnapshot = await resolveStartupReadiness(params);
     // readiness 读取可能与 workspace release 交错；release 删除 waiting identity 后，
     // 旧 continuation 不能创建新进程。未来重新打开同一路径会获得新的 identity，互不误伤。
     if (waiting.cancelled || waitingWorkspaceStartups.get(workspaceKey) !== waiting) {

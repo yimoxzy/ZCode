@@ -26,6 +26,7 @@ import { channelReplyHostRequestSchema, channelReplyResultSchema } from "@zcode/
 /* eslint-disable max-lines -- host process 服务注册和启动装配需要集中维护，拆散后会更难追踪依赖注入顺序 */
 // Node.js service implementations — NOT safe to import in browser code
 import { randomBytes } from "node:crypto";
+import { createManagedWorkspaceModelSelectionService } from "./zhiliu-runtime/index.js";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -1623,19 +1624,7 @@ export function createLocalServices(options: {
     configRuntime: providerConfigRuntime,
     accountSource: accountProviderConfigSource,
     modelSelectionConfiguredDefaultSource: options.managedRuntimeAuthority
-      ? {
-          read: async () => {
-            const profile = options.managedRuntimeAuthority?.readProfile();
-            return profile
-              ? {
-                  providerId: "zhiliu-managed",
-                  modelId: "zhiliu-managed",
-                  options: { reasoningLevel: profile.reasoningEffort ?? "managed" },
-                }
-              : undefined;
-          },
-          onDidChange: options.managedRuntimeAuthority.onDidChange,
-        }
+      ? undefined
       : modelSelectionConfiguredDefaultSource,
     disposeModelSelectionConfiguredDefaultSource: () =>
       modelSelectionConfiguredDefaultSource.dispose(),
@@ -1653,6 +1642,12 @@ export function createLocalServices(options: {
       accountProviderConfigSource.dispose();
     },
   });
+  const managedModelSelection = options.managedRuntimeAuthority
+    ? createManagedWorkspaceModelSelectionService(options.managedRuntimeAuthority)
+    : undefined;
+  const modelSelectionService = managedModelSelection ?? providerRuntime.modelSelection;
+  if (managedModelSelection)
+    providerProvisioningDisposers.push(() => managedModelSelection.dispose());
   handleOAuthProviderLogout = createOAuthProviderLogoutHandler({
     accountProviderCredentialStore,
     refreshAccountProviders: (reason: string) => accountProviderConfigSource.refresh(reason),
@@ -1728,7 +1723,25 @@ export function createLocalServices(options: {
   const memoryService = createMemoryService();
   // 只要当前进程已经装配 Provider Runtime，就由该 Environment 自己的 Selection View
   // 决定执行就绪状态。Desktop-attached remote 也读取远端自己的 Config/Account Facts。
-  const modelSelectionReadinessSource = providerRuntime.modelSelection;
+  const modelSelectionReadinessSource = managedModelSelection
+    ? {
+        workspaceScoped: true,
+        getView: (workspace?: import("./zcode-agent/zcodeAgent.js").ZCodeAgentWorkspaceTarget) =>
+          managedModelSelection.getView(workspace
+            ? {
+                selection: null,
+                workspace: {
+                  workspacePath: workspace.workspacePath,
+                  ...(workspace.workspaceIdentity ? { workspaceIdentity: workspace.workspaceIdentity } : {}),
+                },
+              }
+            : undefined),
+        onDidChange: managedModelSelection.onDidChange,
+      }
+    : {
+        getView: () => providerRuntime.modelSelection.getView(),
+        onDidChange: providerRuntime.modelSelection.onDidChange,
+      };
   const agentAccountProviderConfigSource = accountProviderConfigSource;
   // ===== Computer Use Helper lifecycle 层（port 自 feat）=====
   // 约束：lifecycle coordinator 懒获取 + 代际 fence（dispose 仅来自显式 workspace 生命周期）；
@@ -2245,10 +2258,7 @@ export function createLocalServices(options: {
           resolveManagedRuntimeProfile: async (
             target: import("./zhiliu-runtime/contract.js").ManagedRuntimeTarget,
           ) => {
-            const profile = await options.managedRuntimeAuthority!.resolve(target);
-            await providerRuntime.start();
-            await providerRuntime.registryService.refresh("managed-runtime-profile");
-            return profile;
+            return options.managedRuntimeAuthority!.resolve(target);
           },
         }
       : {}),
@@ -2522,10 +2532,13 @@ export function createLocalServices(options: {
   });
   const gitCommitMessageGenerator = new GitCommitMessageGenerator({
     currentModelProvider: {
-      async readCurrentModel() {
+      async readCurrentModel(workspace) {
         // Git sidecar 属于目标 Environment；初始模型直接读取同一 Host View，
         // 不再通过临时 Agent workspace state 反推模型与 reasoning。
-        return (await providerRuntime.modelSelection.getView()).preferredSelection ?? null;
+        return (
+          (await modelSelectionService.getView({ selection: null, workspace }))
+            .preferredSelection ?? null
+        );
       },
     },
     textGenerator: {
@@ -2728,7 +2741,7 @@ export function createLocalServices(options: {
         zcodeTaskService,
         broadcastService,
         settingService,
-        modelSelectionService: providerRuntime.modelSelection,
+        modelSelectionService,
         remoteWorkspaceService: botRemoteWorkspaceService
           ? { ...botRemoteWorkspaceService, resolveWorkspace: options?.resolveBotRemoteWorkspace }
           : undefined,
@@ -3023,7 +3036,7 @@ export function createLocalServices(options: {
   }
   services
     .register(IProviderSettingsService, providerRuntime.providerSettings)
-    .register(IModelSelectionService, providerRuntime.modelSelection);
+    .register(IModelSelectionService, modelSelectionService);
   if (isDesktopAttachedRemote || options.providerProvisioningTargetEnabled === true) {
     services.register(
       IProviderProvisioningTargetService,

@@ -4,6 +4,7 @@ import type {
   ModelSelectionView,
   ModelSelectionViewInput,
 } from "@zcode/services";
+import { ZHILIU_DESKTOP_ENABLED } from "@zcode/shared";
 import { useWorkspaceServicesResolution } from "@/hooks/useWorkspaceServices.js";
 import { logger } from "@/logger.js";
 
@@ -30,6 +31,7 @@ interface OwnedModelSelectionState {
   enabled: boolean;
   unavailableReason: "remote-waiting" | "missing-target";
   inputKey: string | undefined;
+  workspaceKey: string | undefined;
   state: ModelSelectionState;
 }
 
@@ -61,11 +63,13 @@ function retainedCatalog(
   service: IModelSelectionService | null,
   enabled: boolean,
   unavailableReason: "remote-waiting" | "missing-target",
+  workspaceKey: string | undefined,
 ): ModelSelectionCatalog | undefined {
   if (
     previous.service !== service ||
     previous.enabled !== enabled ||
-    previous.unavailableReason !== unavailableReason
+    previous.unavailableReason !== unavailableReason ||
+    previous.workspaceKey !== workspaceKey
   )
     return undefined;
   // 调档/换模型只改变解析输入；清空同 Host 目录会让菜单收缩闪烁。
@@ -87,6 +91,7 @@ export function useModelSelectionServiceView(
   const normalizedService = service ?? null;
   // 调用方可每次 render 创建参数对象；所有权按选择内容绑定，不按对象引用反复订阅。
   const inputKey = input === undefined ? undefined : JSON.stringify(input);
+  const workspaceKey = input?.workspace === undefined ? undefined : JSON.stringify(input.workspace);
   const stableInput = useMemo(() => input, [inputKey]);
   const [reloadVersion, reload] = useReducer((value: number) => value + 1, 0);
   const [owned, setOwned] = useState<OwnedModelSelectionState>(() => ({
@@ -94,6 +99,7 @@ export function useModelSelectionServiceView(
     enabled,
     unavailableReason,
     inputKey,
+    workspaceKey,
     state: initialState(normalizedService, enabled, unavailableReason),
   }));
   const ownedRef = useRef(owned);
@@ -111,14 +117,20 @@ export function useModelSelectionServiceView(
         normalizedService,
         enabled,
         unavailableReason,
-        retainedCatalog(owned, normalizedService, enabled, unavailableReason),
+        retainedCatalog(owned, normalizedService, enabled, unavailableReason, workspaceKey),
       );
 
   useEffect(() => {
     generationRef.current += 1;
     const generation = generationRef.current;
     const previous = ownedRef.current;
-    const catalog = retainedCatalog(previous, normalizedService, enabled, unavailableReason);
+    const catalog = retainedCatalog(
+      previous,
+      normalizedService,
+      enabled,
+      unavailableReason,
+      workspaceKey,
+    );
     const retainedReady =
       previous.service === normalizedService &&
       previous.enabled === enabled &&
@@ -132,6 +144,7 @@ export function useModelSelectionServiceView(
       enabled,
       unavailableReason,
       inputKey,
+      workspaceKey,
       state: retainedReady ?? initialState(normalizedService, enabled, unavailableReason, catalog),
     });
     if (!enabled || !normalizedService) return;
@@ -155,6 +168,7 @@ export function useModelSelectionServiceView(
         enabled,
         unavailableReason,
         inputKey,
+        workspaceKey,
         state: { status: "ready", view: candidate },
       });
     };
@@ -192,6 +206,7 @@ export function useModelSelectionServiceView(
               enabled,
               unavailableReason,
               inputKey,
+              workspaceKey,
               state: { status: "error", error },
             });
             const delay = INITIAL_READ_RETRY_DELAYS[retryCount];
@@ -214,6 +229,18 @@ export function useModelSelectionServiceView(
       else {
         // 公共事件没有某个调用者的原意图；只能用它触发当前输入重读，不能直接接管结果。
         latestRevision = Math.max(latestRevision, candidate.revision);
+        if (stableInput.workspace) {
+          // 账号或项目授权失效时，旧目录也不再是可执行事实，不能保留 ready 等待重读。
+          hasReadyView = false;
+          setOwned({
+            service: normalizedService,
+            enabled,
+            unavailableReason,
+            inputKey,
+            workspaceKey,
+            state: { status: "loading" },
+          });
+        }
         void read().catch(() => {});
       }
     });
@@ -224,7 +251,15 @@ export function useModelSelectionServiceView(
       cancelRetry();
       subscription.dispose();
     };
-  }, [enabled, normalizedService, reloadVersion, unavailableReason, inputKey, stableInput]);
+  }, [
+    enabled,
+    normalizedService,
+    reloadVersion,
+    unavailableReason,
+    inputKey,
+    stableInput,
+    workspaceKey,
+  ]);
 
   return {
     state: visibleState,
@@ -247,7 +282,9 @@ export function useModelSelectionView(
   remoteTarget?: unknown,
   input?: ModelSelectionViewInput,
 ): ModelSelectionRead {
-  const hasTarget = Boolean(workspacePath?.trim() || workspaceIdentity?.trim());
+  const hasTarget = ZHILIU_DESKTOP_ENABLED
+    ? Boolean(workspacePath?.trim())
+    : Boolean(workspacePath?.trim() || workspaceIdentity?.trim());
   const resolution = useWorkspaceServicesResolution(
     workspacePath,
     remoteSessionId,
@@ -255,10 +292,19 @@ export function useModelSelectionView(
     remoteTarget,
   );
   const remoteWaiting = resolution.connectionKind === "remote-waiting";
+  // 托管目录属于具体工作区；相同 Host/模型别名不能沿用另一项目的授权目录。
+  const targetInput =
+    ZHILIU_DESKTOP_ENABLED && workspacePath?.trim()
+      ? {
+          ...input,
+          selection: input?.selection ?? null,
+          workspace: { workspacePath, ...(workspaceIdentity ? { workspaceIdentity } : {}) },
+        }
+      : input;
   return useModelSelectionServiceView(
     resolution.services.modelSelectionService,
     hasTarget && !remoteWaiting,
     hasTarget ? "remote-waiting" : "missing-target",
-    input,
+    targetInput,
   );
 }

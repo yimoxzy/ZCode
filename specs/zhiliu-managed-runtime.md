@@ -95,3 +95,26 @@ sequenceDiagram
 正文、附件、确认模式和 Plan 不变；不重放已接受的任务、模型或工具。运行中切换仍由 Main 拒绝；失败不调用同步回调。组件目标使用 `workspaceIdentity?.trim() || workspacePath`，切项目、卸载及账号失效立即推进请求代次，迟到的 set/get 不得重读或写入新目标。账号变更只接收失效信号，不通过 DOM 传播凭据或身份对象。
 
 验收：medium→low→high；已保存旧草稿重开；历史任务下一轮；正文/附件/权限/Plan保留；Set失败和busy拒绝；账号/工作区切换及迟到回调隔离；临时无目录时不清空选择；非托管别名仍由原严格校验拒绝。
+
+## 同一 Host 多工作区目录隔离
+
+已验证缺陷：workspace one 的 broker 授权 low、two 的 broker 授权 high；再次复用 one 原 broker 时，旧全局 `profile/readProfile()` 仍发布 high 目录。供应商请求由各自 grant 在 SaaS 强制固定，所以该缺陷未证明跨空间扣费，却会让 UI 草稿和 CLI 授权不一致。不得通过向所有项目展示 low/high 联集来绕过。
+
+唯一授权事实继续属于 authority 的 `active[workspaceKey].profile`。`readProfile(target)` 必须按 `workspaceIdentity?.trim() || workspacePath` 查询；无 target 返回 undefined，不存在“最后活跃项目”。ModelSelection 服务的读取合同增量增加可选 `workspace`；通用上游 facade 不变，未装配托管 authority 时保留原行为。
+
+托管 Host 的 ModelSelection 服务按 workspaceKey 只缓存现有 ProviderRuntime 的只读派生目录；它不复制 grant、任务、选择或队列。读取显式 target 才可通过现有 authority.resolve 获取授权，并用绑定该 target 的配置 source 构建目录。异步读取前后校验 profile 对象身份；失效、退出和 scope 换代后拒绝迟到读取，不复活旧目录。失效时移除无 profile 的派生缓存；服务释放时清理所有派生 runtime。无 target 读取返回空目录且不创建 broker。
+
+共享 `onDidChange` 只通知失效，不能把另一项目的 ready View 当成本项目执行事实。原生/Web Composer、readiness、Git 辅助模型调用、automation 和 Agent 启动准入均传递执行 target 并重读；相同 Host 切换 workspace 也立即进入 loading，不能因模型别名相同而保留另一项目 ready。已固定自动化 run 不重新解释其历史选择。
+
+```mermaid
+flowchart LR
+  A[Main每项目选择] --> B[authority active workspaceKey broker/profile]
+  B --> C1[one绑定配置source与派生目录]
+  B --> C2[two绑定配置source与派生目录]
+  D[getView workspace one] --> C1
+  E[getView workspace two] --> C2
+  C1 --> F[one Composer下一轮]
+  C2 --> G[two Composer下一轮]
+```
+
+验收：同 Host 两项目并发 low/high；切回与同路径不同 identity；默认 effort(null→managed)；单项目失效不影响另一项目；退出/重登及延迟读取；无 target 不发授权；原生/Web 下一轮与自动化/Git target；原上游未托管行为回归。SaaS 每次 admission 重新校验 grant 与套餐并覆盖客户端 reasoning；本地目录改动不改变计费来源。

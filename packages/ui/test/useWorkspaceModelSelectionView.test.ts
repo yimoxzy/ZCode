@@ -7,6 +7,7 @@ import { useModelSelectionView } from "@/hooks/useModelSelectionView.js";
 const mocks = vi.hoisted(() => {
   const getView = vi.fn<() => Promise<ModelSelectionView>>();
   return {
+    managed: false,
     connectionKind: "local-ready" as "local-ready" | "remote-waiting",
     getView,
     services: {
@@ -18,6 +19,13 @@ const mocks = vi.hoisted(() => {
   };
 });
 
+vi.mock("@zcode/shared", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@zcode/shared")>()),
+  get ZHILIU_DESKTOP_ENABLED() {
+    return mocks.managed;
+  },
+}));
+
 vi.mock("@/hooks/useWorkspaceServices.js", () => ({
   useWorkspaceServicesResolution: () => ({
     connectionKind: mocks.connectionKind,
@@ -27,9 +35,41 @@ vi.mock("@/hooks/useWorkspaceServices.js", () => ({
 
 describe("useModelSelectionView target lifecycle", () => {
   beforeEach(() => {
+    mocks.managed = false;
     mocks.connectionKind = "local-ready";
     mocks.getView.mockReset();
     mocks.getView.mockResolvedValue({ revision: 1, providers: [] });
+  });
+
+  it("托管原生与 Web 远控均携带当前路径及 identity，缺失路径不发授权", async () => {
+    mocks.managed = true;
+    const hook = renderHook(
+      ({ path, identity }) => useModelSelectionView(path, "remote-1", identity),
+      {
+        initialProps: { path: "/same" as string | null, identity: "space:one" },
+      },
+    );
+    await waitFor(() => expect(hook.result.current.state.status).toBe("ready"));
+    expect(mocks.getView).toHaveBeenLastCalledWith({
+      selection: null,
+      workspace: {
+        workspacePath: "/same",
+        workspaceIdentity: "space:one",
+      },
+    });
+    hook.rerender({ path: "/same", identity: "space:two" });
+    await waitFor(() =>
+      expect(mocks.getView).toHaveBeenLastCalledWith({
+        selection: null,
+        workspace: {
+          workspacePath: "/same",
+          workspaceIdentity: "space:two",
+        },
+      }),
+    );
+    hook.rerender({ path: null, identity: "space:two" });
+    expect(hook.result.current.state).toEqual({ status: "unavailable", reason: "missing-target" });
+    expect(mocks.getView).toHaveBeenCalledTimes(2);
   });
 
   it("missing target 明确 unavailable 且不读取 Base Host", async () => {

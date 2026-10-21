@@ -30,6 +30,7 @@ import type { IDisposable } from "@zcode/rpc";
 import { completeNewModelSelection } from "@zcode/provider";
 import {
   ALL_BOT_WORKSPACES,
+  ZHILIU_DESKTOP_ENABLED,
   parseRemoteWorkspaceIdentity,
   CONVERSATION_SELECTION_MAX_TEXT_LENGTH,
   generateTraceId,
@@ -2340,7 +2341,15 @@ export function createBotsService(
     const service = await resolveModelSelectionServiceForContext(context).catch(() => null);
     if (!service) return null;
     return service.getView
-      .call(service, selection ? { selection } : undefined)
+      .call(service, ZHILIU_DESKTOP_ENABLED
+        ? {
+            selection: selection ?? null,
+            workspace: {
+              workspacePath: context.workspacePath,
+              ...(context.workspaceIdentity ? { workspaceIdentity: context.workspaceIdentity } : {}),
+            },
+          }
+        : selection ? { selection } : undefined)
       .catch((error: unknown) => {
         botsLogger.warn(
           undefined,

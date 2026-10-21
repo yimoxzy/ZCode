@@ -2,6 +2,18 @@ import { describe, expect, it, vi } from "vitest";
 import { resolveAutomationSubmissionModelSelection } from "../src/host/automationModelSelection.js";
 
 describe("resolveAutomationSubmissionModelSelection", () => {
+  it("托管首次派发始终携带目标工作区，显式选择和默认选择均不读全局目录", async () => {
+    const workspace = { workspacePath: "C:/shared", workspaceIdentity: "project-one" };
+    const selection = { providerId: "zhiliu-managed", modelId: "zhiliu-managed", options: { reasoningLevel: "low" } };
+    const getView = vi.fn().mockResolvedValue({ effectiveSelection: selection, preferredSelection: selection });
+    await resolveAutomationSubmissionModelSelection({ workspace, selection, modelSelectionService: { getView } });
+    expect(getView).toHaveBeenLastCalledWith({ selection, workspace });
+    await resolveAutomationSubmissionModelSelection({ workspace, modelSelectionService: { getView } });
+    expect(getView).toHaveBeenLastCalledWith({ selection: null, workspace });
+    getView.mockClear();
+    await resolveAutomationSubmissionModelSelection({ workspace, fixedSelection: selection, modelSelectionService: { getView } });
+    expect(getView).not.toHaveBeenCalled();
+  });
   it("首次派发重读导入后的配置；读取失败不能落入 Workspace 默认，同 run 不重读", async () => {
     const migrated = {
       providerId: "account:bigmodel-team-coding-plan",

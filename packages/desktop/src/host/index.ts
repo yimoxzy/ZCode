@@ -1015,6 +1015,12 @@ async function dispatchCronRun(request: CronRunDispatchRequest): Promise<{
   // 不能因账号变化或本次 Registry 读取失败重新解释历史执行选择。
   const existingRun = await cronAutomationRepo.getRun(request.runId);
   const resolvedSubmissionModelSelection = await resolveAutomationSubmissionModelSelection({
+    ...(ZHILIU_DESKTOP_ENABLED ? {
+      workspace: {
+        workspacePath: request.workspacePath,
+        ...(request.workspaceIdentity ? { workspaceIdentity: request.workspaceIdentity } : {}),
+      },
+    } : {}),
     selection: request.modelSelection,
     fixedSelection: existingRun?.modelSelection,
     modelSelectionService,

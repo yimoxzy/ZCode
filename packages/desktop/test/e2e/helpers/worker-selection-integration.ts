@@ -99,7 +99,11 @@ export async function createWorkerSelectionIntegration() {
         ZCODE_PERSONAL_PROVIDER_CONFIG_FILE: runtimePaths.personalFilePath,
       },
     }),
-    modelSelectionReadinessSource: modelSelectionService,
+    // 保留上游夹具的全局目录与事件合同，显式适配工作区就绪读取签名。
+    modelSelectionReadinessSource: {
+      getView: () => modelSelectionService.getView(),
+      onDidChange: modelSelectionService.onDidChange,
+    },
     accountProviderConfigSource: deliverySource,
     // 测试只核对选择合同；不使用真实账号、真实 secret 或外部 IM 网络。
     accountRequestAuthService: {

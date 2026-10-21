@@ -344,6 +344,103 @@ describe("createZCodeAgentService provider registry", () => {
     service.disposeAll();
   });
 
+  it("workspaceScoped 失效逐个重读同路径的独立 identity，只启动本项目已就绪的 worker", async () => {
+    const one = {
+      workspacePath: "/workspace/shared",
+      workspaceIdentity: "remote:ssh:one:/workspace/shared",
+    };
+    const two = {
+      workspacePath: "/workspace/shared",
+      workspaceIdentity: "remote:ssh:two:/workspace/shared",
+    };
+    const views = new Map<string, ModelSelectionView>([
+      [one.workspaceIdentity, { revision: 1, providers: [] }],
+      [two.workspaceIdentity, { revision: 1, providers: [] }],
+    ]);
+    let changed: ((view: ModelSelectionView) => void) | undefined;
+    const getView = vi.fn(
+      async (workspace?: { workspacePath: string; workspaceIdentity?: string }) => {
+        if (!workspace?.workspaceIdentity) throw new Error("workspace target required");
+        return views.get(workspace.workspaceIdentity)!;
+      },
+    );
+    const getClient = vi.fn(async () => ({
+      request: vi.fn(async () => {
+        throw new Error("Unexpected request");
+      }),
+      transportKind: "stdio" as const,
+      onNotification: () => ({ dispose() {} }),
+      onRequest: () => ({ dispose() {} }),
+      onClose: () => ({ dispose() {} }),
+    }));
+    vi.resetModules();
+    vi.doMock("../src/zcode-agent/zcodeAgentProcessManager.js", () => ({
+      ZCodeAgentProcessManager: class extends MockProcessManagerBase {
+        getClient = getClient;
+        disposeAll() {}
+      },
+    }));
+    const { createZCodeAgentService } = await import("../src/zcode-agent/zcodeAgentService.js");
+    const service = createZCodeAgentService({
+      modelSelectionReadinessSource: {
+        workspaceScoped: true,
+        getView,
+        onDidChange(listener) {
+          changed = listener;
+          return {
+            dispose() {
+              changed = undefined;
+            },
+          };
+        },
+      },
+    });
+    try {
+      await expect(
+        Promise.all([service.initialize(one), service.initialize(two)]),
+      ).resolves.toEqual([
+        expect.objectContaining({ available: false, reasonCode: "provider_not_ready" }),
+        expect.objectContaining({ available: false, reasonCode: "provider_not_ready" }),
+      ]);
+      expect(getClient).not.toHaveBeenCalled();
+      expect(getView).toHaveBeenCalledWith(one);
+      expect(getView).toHaveBeenCalledWith(two);
+      getView.mockClear();
+
+      views.set(
+        one.workspaceIdentity,
+        createModelSelectionViewFromRegistry(createStartPlanRegistry()),
+      );
+      // 公共空目录是失效信号，不能被当成所有 workspace 的 missing 或另一项目的 ready。
+      changed!({ revision: 2, providers: [] });
+      await vi.waitFor(() => {
+        expect(getView).toHaveBeenCalledWith(one);
+        expect(getView).toHaveBeenCalledWith(two);
+        expect(getClient).toHaveBeenCalledTimes(1);
+      });
+      expect(getClient).toHaveBeenLastCalledWith(one);
+      await expect(service.initialize(one)).resolves.toMatchObject({ available: true });
+      await expect(service.initialize(two)).resolves.toMatchObject({
+        available: false,
+        reasonCode: "provider_not_ready",
+      });
+      expect(getClient).toHaveBeenCalledTimes(1);
+
+      views.set(
+        two.workspaceIdentity,
+        createModelSelectionViewFromRegistry(createStartPlanRegistry()),
+      );
+      getView.mockClear();
+      changed!({ revision: 3, providers: [] });
+      await vi.waitFor(() => expect(getClient).toHaveBeenCalledTimes(2));
+      expect(getView).toHaveBeenCalledWith(two);
+      expect(getClient).toHaveBeenLastCalledWith(two);
+      await expect(service.initialize(two)).resolves.toMatchObject({ available: true });
+    } finally {
+      service.disposeAll();
+    }
+  });
+
   it("resolves account provider request auth without a renderer round trip", async () => {
     let requestListener: ((request: unknown) => void) | undefined;
     const respond = vi.fn(async () => {});

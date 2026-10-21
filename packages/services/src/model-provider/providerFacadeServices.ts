@@ -6,7 +6,7 @@ import {
   type ModelSelection,
   type ModelSelectionFacade,
   type ModelSelectionView,
-  type ModelSelectionViewInput,
+  type ModelSelectionViewInput as ProviderModelSelectionViewInput,
   type ProviderConfigObject,
   type ProviderId,
   type ProviderSettingsFacade,
@@ -24,9 +24,13 @@ import { rejectPersonalModelOperation } from "../zhiliu/managedModelPolicy.js";
 export type {
   ProviderSettingsProviderView,
   ModelSelectionView,
-  ModelSelectionViewInput,
   ProviderSettingsView,
 } from "@zcode/provider";
+
+/** Optional execution target; ordinary provider facades continue to consume only selection. */
+export interface ModelSelectionViewInput extends ProviderModelSelectionViewInput {
+  workspace?: { workspacePath: string; workspaceIdentity?: string };
+}
 
 export interface IProviderSettingsService {
   readonly onDidChange: Event<ProviderSettingsView>;
@@ -251,7 +255,11 @@ export function createModelSelectionService(
     if (disposed) throw new Error("ModelSelectionService 已 dispose");
     const base = facade.getView(configuredDefault);
     if (revision < base.revision) revision = base.revision;
-    return facade.getView(configuredDefault, revision, input);
+    return facade.getView(
+      configuredDefault,
+      revision,
+      input ? { selection: input.selection } : undefined,
+    );
   };
   const emit = (): void => {
     if (disposed) return;

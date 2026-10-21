@@ -18,7 +18,6 @@ export function createManagedRuntimeAuthority(options: {
   let port: RuntimePrivatePort | undefined;
   let generation = 0;
   let disposed = false;
-  let profile: ZhiliuManagedRuntimeProfile | undefined;
   const listeners = new Set<() => void>();
   const active = new Map<string, Awaited<ReturnType<typeof createManagedModelBroker>>>();
   const starting = new Map<string, Promise<ZhiliuManagedRuntimeProfile>>();
@@ -56,7 +55,6 @@ export function createManagedRuntimeAuthority(options: {
   let cleanup = Promise.resolve();
   const invalidate = () => {
     generation++;
-    profile = undefined;
     for (const entry of pending.values()) {
       clearTimeout(entry.timer);
       entry.reject(new Error("织流授权已断开"));
@@ -110,7 +108,6 @@ export function createManagedRuntimeAuthority(options: {
         }),
       );
     }
-    profile = undefined;
     emit();
     await Promise.all(operations);
   };
@@ -197,7 +194,6 @@ export function createManagedRuntimeAuthority(options: {
           throw new Error("织流授权已断开");
         }
         active.set(key, broker);
-        profile = broker.profile;
         emit();
         return broker.profile;
       })();
@@ -208,7 +204,10 @@ export function createManagedRuntimeAuthority(options: {
         if (starting.get(key) === operation) starting.delete(key);
       }
     },
-    readProfile: () => profile,
+    // 实测同 Host 的 one=low/two=high 曾被最后一次 resolve 的全局 profile 串成 high。
+    // broker map 才是每个工作区的授权 owner；无目标读取不得猜测一个活跃项目。
+    readProfile: (target) =>
+      target ? active.get(resolveWorkspaceKey(target))?.profile : undefined,
     onDidChange(listener) {
       listeners.add(listener);
       return () => listeners.delete(listener);
