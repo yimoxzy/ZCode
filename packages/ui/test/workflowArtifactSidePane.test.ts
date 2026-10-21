@@ -401,7 +401,13 @@ describe("WorkflowArtifactSidePane 版本步进器", () => {
   });
 
   it("多版时按**已知版本的数组**翻，并按所选版本重读字节", async () => {
-    workflowRunArtifacts.mockResolvedValue({
+    const initialJournal = Promise.withResolvers<V4ConversationWorkflowRunArtifactsResult>();
+    const initialRead = Promise.withResolvers<V4ConversationWorkflowRunArtifactReadResult>();
+    workflowRunArtifacts.mockReturnValue(initialJournal.promise);
+    workflowRunArtifactRead.mockImplementation(({ version }) =>
+      version === 3 ? initialRead.promise : Promise.resolve(textChunk("v2", "application/pdf")),
+    );
+    const journalResult = {
       artifacts: [
         record({
           version: 3,
@@ -412,18 +418,31 @@ describe("WorkflowArtifactSidePane 版本步进器", () => {
           ],
         }),
       ],
-    });
+    };
     const view = renderPane();
+    expect(workflowRunArtifactRead).not.toHaveBeenCalled();
+    // DOM 已出现不代表首次异步读取已结算；显式提交 journal 并 flush 初始 effect，
+    // v3 字节仍保持在途，避免本用例依赖 MutationObserver 与 React 提交的偶然先后。
+    await act(async () => initialJournal.resolve(journalResult));
     await waitFor(() => expect(view.getByTestId("workflow-artifact-version-stepper")).toBeTruthy());
     // 缺省落点是最新版（chip 从不带版本号）。
     expect(view.getByTestId("workflow-artifact-version").textContent).toBe("第 3 版 / 共 3 版");
     expect(view.getByTestId("workflow-artifact-version-next").hasAttribute("disabled")).toBe(true);
+    await waitFor(() =>
+      expect(workflowRunArtifactRead).toHaveBeenCalledWith(expect.objectContaining({ version: 3 })),
+    );
+    expect(view.queryByTestId("pdf-viewer")).toBeNull();
 
     fireEvent.click(view.getByTestId("workflow-artifact-version-previous"));
     await waitFor(() =>
       expect(view.getByTestId("workflow-artifact-version").textContent).toBe("第 2 版 / 共 3 版"),
     );
     await waitFor(() => expect(workflowRunArtifactRead.mock.calls.at(-1)?.[0]?.version).toBe(2));
+    await waitFor(() => expect(view.getByTestId("pdf-viewer").getAttribute("data-size")).toBe("2"));
+    // 最新版的迟到响应不能把已选择的旧版或其正文换回去。
+    await act(async () => initialRead.resolve(textChunk("bytes---", "application/pdf")));
+    expect(view.getByTestId("workflow-artifact-version").textContent).toBe("第 2 版 / 共 3 版");
+    expect(view.getByTestId("pdf-viewer").getAttribute("data-size")).toBe("2");
   });
 
   it("journal 读不到版本历史时不凭最新版号编造 1..n", async () => {
