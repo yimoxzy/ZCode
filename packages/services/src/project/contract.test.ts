@@ -243,24 +243,28 @@ it("routes every foreign project operation to its existing owner and never falls
 
 it("browses owner directories without touching project storage or admitting a session", async () => {
   const repository = vi.fn();
-  const directories = { home: async () => "/owner", read: vi.fn(async () => []) };
+  // 本地目录遵循 Host 的路径规则，fixture 不能把 POSIX 分隔符当成 Windows 的规范化结果。
+  const owner = join(tmpdir(), "owner");
+  const another = join(tmpdir(), "another");
+  const folder = join(owner, "folder");
+  const directories = { home: async () => owner, read: vi.fn(async () => []) };
   const service = createProjectService({
     repository,
-    workspaceDirectory: "/workspace",
+    workspaceDirectory: join(tmpdir(), "workspace"),
     directories,
   });
-  expect(await service.readDirectory()).toEqual({ path: "/owner", entries: [] });
-  expect(directories.read).toHaveBeenCalledWith({ path: "/owner" });
-  await service.readDirectory({ path: "/another", includeHidden: true });
-  expect(directories.read).toHaveBeenLastCalledWith({ path: "/another", includeHidden: true });
+  expect(await service.readDirectory()).toEqual({ path: owner, entries: [] });
+  expect(directories.read).toHaveBeenCalledWith({ path: owner });
+  await service.readDirectory({ path: another, includeHidden: true });
+  expect(directories.read).toHaveBeenLastCalledWith({ path: another, includeHidden: true });
   await expect(service.readDirectory({ path: "relative" })).rejects.toThrow(
     "project.absolute-path-required",
   );
-  expect(await service.readDirectory({ path: "/owner/child/../folder" })).toEqual({
-    path: "/owner/folder",
+  expect(await service.readDirectory({ path: `${owner}/child/../folder` })).toEqual({
+    path: folder,
     entries: [],
   });
-  expect(directories.read).toHaveBeenLastCalledWith({ path: "/owner/folder" });
+  expect(directories.read).toHaveBeenLastCalledWith({ path: folder });
   expect(repository).not.toHaveBeenCalled();
 });
 

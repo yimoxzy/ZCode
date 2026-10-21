@@ -1,6 +1,6 @@
 import { access, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   SOURCE_SERVER_RELEASE_DESCRIPTOR_FILE_NAME,
@@ -57,7 +57,8 @@ describe("Source Server remote release assets", () => {
       version: "3.8.0",
     });
 
-    expect(collected.map((path) => path.split("/").at(-1))).toEqual(
+    // archive 的目标平台不决定本地 staging 路径的分隔符，Windows 也应按本机规则提取文件名。
+    expect(collected.map((path) => basename(path))).toEqual(
       SOURCE_SERVER_REMOTE_RELEASE_TARGETS.map((target) => `zcode-server-${target}.tar.gz`),
     );
     await expect(
