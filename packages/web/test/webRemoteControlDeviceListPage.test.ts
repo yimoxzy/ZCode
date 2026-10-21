@@ -63,6 +63,18 @@ function render(
 
 describe("连接前设备列表", () => {
   it.each(["zh-CN", "en-US"] as const)(
+    "%s 已登记无relay的设备明确提示远控未连接并禁用",
+    (locale) => {
+      const html = render(locale, { devices: [{ ...homePc, registered: true }] });
+      expect(html).toContain(
+        locale === "zh-CN" ? "已登记，远控未连接" : "Registered, remote control disconnected",
+      );
+      expect(html).toContain('disabled=""');
+      expect(html).not.toContain("bg-success");
+    },
+  );
+
+  it.each(["zh-CN", "en-US"] as const)(
     "%s 织流构建只替换应用品牌，保留用户命名",
     async (locale) => {
       vi.stubGlobal("__ZHILIU_DESKTOP_ENABLED__", true);

@@ -2,12 +2,14 @@ import { WebRemoteControlV2ConnectionError } from "@zcode/shared/web-remote-rela
 import type {
   WebRemoteControlAuthPort,
   WebRemoteControlCredentialChange,
+  WebRemoteControlRegisteredDevice,
 } from "#src/web-remote-control/contract.js";
 import { withWebRemoteControlHttpSignal } from "#src/web-remote-control/adapters/webRemoteControlHttpSignal.js";
 
 const GRANT_PATH = "/api/desktop-relay/terminal-grants";
 const REFRESH_PATH = "/api/auth/refresh";
 const LOGOUT_PATH = "/api/auth/logout";
+const DEVICES_PATH = "/api/devices";
 const REFRESH_MARGIN_MS = 30_000;
 const RETRY_MS = 5_000;
 const MIN_REFRESH_MS = 1_000;
@@ -16,6 +18,7 @@ const ACCESS_KEY = "access_token";
 const REFRESH_KEY = "refresh_token";
 const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
 const PRINCIPAL_PATTERN = new RegExp(`^${UUID}:${UUID}$`, "iu");
+const DEVICE_ID_PATTERN = new RegExp(`^${UUID}$`, "iu");
 const GRANT_PATTERN = /^rc_[A-Za-z0-9_-]{37,125}$/u;
 const TOKEN_LIMIT = 16_384;
 class StaleSaasSession extends Error {}
@@ -74,6 +77,32 @@ function parseGrant(value: unknown, now: number, rootToken: string): Grant {
   return { token: data.relay_grant, expiresAt, identity: data.principal_id, rootToken };
 }
 
+function parseRegisteredDevices(value: unknown): WebRemoteControlRegisteredDevice[] {
+  if (!Array.isArray(value) || value.length > 100)
+    throw new WebRemoteControlV2ConnectionError("relay-unavailable");
+  const devices = new Map<string, WebRemoteControlRegisteredDevice>();
+  for (const item of value) {
+    const data = record(item);
+    if (
+      !data ||
+      data.status !== "active" ||
+      data.revoked_at !== null ||
+      typeof data.id !== "string" ||
+      !DEVICE_ID_PATTERN.test(data.id) ||
+      typeof data.name !== "string" ||
+      !data.name.trim() ||
+      data.name.length > 100 ||
+      typeof data.platform !== "string" ||
+      !data.platform.trim() ||
+      data.platform.length > 40
+    )
+      continue;
+    // 原生设备心跳不是 relay 在线事实，不能把其余返回字段传给 Entry。
+    devices.set(data.id, { id: data.id, name: data.name.trim(), platform: data.platform.trim() });
+  }
+  return [...devices.values()];
+}
+
 /** HTTP/storage 边界单独持有 rc_；不向 Host、URL、日志或持久配置复制。 */
 export class ZhiliuWebRelayAuth implements WebRemoteControlAuthPort {
   private readonly origin: string;
@@ -125,6 +154,70 @@ export class ZhiliuWebRelayAuth implements WebRemoteControlAuthPort {
       return Promise.resolve();
     if (!this.pending) this.beginRefresh();
     return this.waitForRefresh(this.pending!.promise, signal);
+  }
+
+  async listRegisteredDevices(signal: AbortSignal): Promise<WebRemoteControlRegisteredDevice[]> {
+    await this.prepareSession(signal);
+    const generation = this.generation;
+    const identity = this.getSessionIdentity();
+    let token = this.accessToken();
+    if (!identity || !token) throw new WebRemoteControlV2ConnectionError("auth-required");
+    try {
+      return await withWebRemoteControlHttpSignal(signal, async (requestSignal) => {
+        const assertCurrent = () => {
+          if (requestSignal.aborted)
+            throw requestSignal.reason ?? new DOMException("Request aborted", "AbortError");
+          if (
+            generation !== this.generation ||
+            token !== this.accessToken() ||
+            identity !== this.getSessionIdentity()
+          )
+            throw new StaleSaasSession();
+        };
+        const request = () =>
+          this.fetcher(new URL(DEVICES_PATH, this.origin), {
+            method: "GET",
+            headers: { Authorization: `Bearer ${token}` },
+            credentials: "same-origin",
+            cache: "no-store",
+            redirect: "error",
+            signal: requestSignal,
+          });
+        assertCurrent();
+        let response = await request();
+        assertCurrent();
+        if (response.status === 401) {
+          // 根身份刷新只由现有 pending owner 执行，不能与后台 grant 轮换并行写 sessionStorage。
+          if (this.pending) await this.waitForRefresh(this.pending.promise, requestSignal);
+          if (
+            requestSignal.aborted ||
+            generation !== this.generation ||
+            identity !== this.getSessionIdentity()
+          )
+            throw new StaleSaasSession();
+          if (token && token === this.accessToken()) {
+            if (!this.pending) this.beginRefresh(token);
+            await this.waitForRefresh(this.pending!.promise, requestSignal);
+          }
+          token = this.accessToken();
+          assertCurrent();
+          response = await request();
+          assertCurrent();
+        }
+        if (response.status === 401 || response.status === 403)
+          throw new WebRemoteControlV2ConnectionError("auth-required");
+        if (!response.ok)
+          throw new WebRemoteControlV2ConnectionError("relay-unavailable", response.status >= 500);
+        const value: unknown = await response.json();
+        assertCurrent();
+        return parseRegisteredDevices(value);
+      });
+    } catch (error) {
+      if (signal.aborted) throw signal.reason;
+      throw error instanceof WebRemoteControlV2ConnectionError
+        ? error
+        : new WebRemoteControlV2ConnectionError("relay-unavailable", true);
+    }
   }
 
   startLogin(options?: Parameters<WebRemoteControlAuthPort["startLogin"]>[0]): void {
@@ -195,12 +288,12 @@ export class ZhiliuWebRelayAuth implements WebRemoteControlAuthPort {
     for (const listener of this.listeners) listener(change);
   }
 
-  private beginRefresh(): void {
+  private beginRefresh(failedAccessToken?: string): void {
     const controller = new AbortController();
     const generation = this.generation;
     const previous = this.grant;
     const pending = { controller, promise: Promise.resolve() };
-    pending.promise = this.issue(controller.signal, generation)
+    pending.promise = this.issue(controller.signal, generation, failedAccessToken)
       .then((grant) => {
         if (generation !== this.generation || controller.signal.aborted) return;
         this.grant = grant;
@@ -255,10 +348,17 @@ export class ZhiliuWebRelayAuth implements WebRemoteControlAuthPort {
     });
   }
 
-  private async issue(signal: AbortSignal, generation: number): Promise<Grant> {
+  private async issue(
+    signal: AbortSignal,
+    generation: number,
+    failedAccessToken?: string,
+  ): Promise<Grant> {
     let token = this.accessToken();
     if (!token) throw new WebRemoteControlV2ConnectionError("auth-required");
     return withWebRemoteControlHttpSignal(signal, async (requestSignal) => {
+      const refreshRejectedRoot = failedAccessToken === token;
+      if (refreshRejectedRoot)
+        token = await this.refreshAccessToken(token!, requestSignal, generation);
       const request = () =>
         this.fetcher(new URL(GRANT_PATH, this.origin), {
           method: "POST",
@@ -271,7 +371,7 @@ export class ZhiliuWebRelayAuth implements WebRemoteControlAuthPort {
         });
       let response = await request();
       if (token !== this.accessToken()) throw new StaleSaasSession();
-      if (response.status === 401) {
+      if (response.status === 401 && !refreshRejectedRoot) {
         token = await this.refreshAccessToken(token!, requestSignal, generation);
         response = await request();
       }

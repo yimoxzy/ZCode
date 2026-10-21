@@ -8,7 +8,16 @@ export interface WebRemoteControlDeviceGroup {
   name?: string;
   /** relay meta.platform（darwin / win32 / linux 等），离线时回退到本机记住的平台。 */
   platform?: string;
+  /** 同账号 SaaS 登记资料；不代表 relay 在线或拥有目录权限。 */
+  registered?: boolean;
   onlineConnections: WebRemoteControlRelayV2Device[];
+}
+
+/** SaaS 目录的只读白名单；连接仍只使用 relay 返回的真实 SID。 */
+export interface WebRemoteControlRegisteredDevice {
+  id: string;
+  name: string;
+  platform: string;
 }
 
 /** 本机见过的在线设备展示信息；name / platform 至少一项非空。 */
@@ -55,6 +64,7 @@ export type WebRemoteControlAuthPort = Pick<
 > & {
   /** 可信 adapter 从同源 SaaS 身份换取内存 relay grant，不在 Entry 内做 HTTP。 */
   prepareSession?(signal: AbortSignal, force?: boolean): Promise<void>;
+  listRegisteredDevices?(signal: AbortSignal): Promise<WebRemoteControlRegisteredDevice[]>;
   getSessionIdentity?(): string | null;
   subscribeCredentialChanged?(
     listener: (change: WebRemoteControlCredentialChange) => void,

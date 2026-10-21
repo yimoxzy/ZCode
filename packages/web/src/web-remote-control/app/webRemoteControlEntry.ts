@@ -156,18 +156,23 @@ export class WebRemoteControlEntry {
     this.options.onView(list.view);
     list.request = (async () => {
       try {
-        const devices = await this.relayRequest(
-          (credential) => this.options.devices(credential, signal),
-          signal,
-        );
+        const [devices, registeredDevices] = await Promise.all([
+          this.relayRequest((credential) => this.options.devices(credential, signal), signal),
+          this.options.auth.listRegisteredDevices?.(signal),
+        ]);
         if (signal.aborted) return;
         // 账号变更后的响应不能为新账号提供设备或自动连接依据。
         if (this.identity() !== identity) return this.start();
         list.acceptedJwt = identity ?? undefined;
-        // 先读缓存补全离线记录的名字/平台，再把本次在线记录写回；它们只是展示偏好，不进入 admission。
-        const knownDevices = readKnownDevices(this.options.storage);
-        const groups = groupWebRemoteControlDevices(devices, this.options.locale, knownDevices);
-        rememberKnownDevices(this.options.storage, knownDevices, groups);
+        // SaaS 目录已按 user+space 过滤；旧浏览器缓存没有账号边界，不能补进当前账号或持久化登记资料。
+        const knownDevices = registeredDevices ? new Map() : readKnownDevices(this.options.storage);
+        const groups = groupWebRemoteControlDevices(
+          devices,
+          this.options.locale,
+          knownDevices,
+          registeredDevices,
+        );
+        if (!registeredDevices) rememberKnownDevices(this.options.storage, knownDevices, groups);
         list.view = { ...list.view, devices: groups, loading: false, error: false };
         const autoSid = resolveAutoConnectSid(devices, groups, list.lastSid, list.lastMid);
         // 自动落点只消费首次成功的列表；后续刷新不能打断用户选择。

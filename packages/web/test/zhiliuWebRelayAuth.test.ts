@@ -12,6 +12,14 @@ const principal = "11111111-1111-4111-8111-111111111111:22222222-2222-4222-8222-
 const otherPrincipal = "11111111-1111-4111-8111-111111111111:33333333-3333-4333-8333-333333333333";
 const relayGrant = "rc_" + "a".repeat(64);
 const rotatedGrant = "rc_" + "b".repeat(64);
+const registeredId = "44444444-4444-4444-8444-444444444444";
+const registeredDevice = {
+  id: registeredId,
+  name: "新电脑",
+  platform: "win32",
+  status: "active",
+  revoked_at: null,
+};
 
 function grantBody(token = relayGrant, identity = principal) {
   return {
@@ -49,6 +57,233 @@ function authFixture(fetcher: typeof fetch = async () => Response.json(grantBody
 }
 
 describe("织流网页 relay 身份边界", () => {
+  it("同源读取已登记设备，只返回白名单资料，不能把 native 心跳变为 relay 在线", async () => {
+    const fetcher = vi.fn<typeof fetch>(async (url) =>
+      Response.json(
+        String(url).endsWith("/devices")
+          ? [
+              { ...registeredDevice, online: true, workspace_ready: true, public_key: "private" },
+              {
+                ...registeredDevice,
+                id: "55555555-5555-4555-8555-555555555555",
+                status: "revoked",
+              },
+              {
+                ...registeredDevice,
+                id: "66666666-6666-4666-8666-666666666666",
+                revoked_at: "2026-10-21",
+              },
+              { ...registeredDevice, id: "not-a-uuid" },
+              { ...registeredDevice, name: "x".repeat(101) },
+              { ...registeredDevice, platform: "x".repeat(41) },
+            ]
+          : grantBody(),
+      ),
+    );
+    const h = authFixture(fetcher);
+    await expect(h.auth.listRegisteredDevices(new AbortController().signal)).resolves.toEqual([
+      { id: registeredId, name: "新电脑", platform: "win32" },
+    ]);
+    expect(fetcher.mock.calls[1]![1]).toMatchObject({
+      method: "GET",
+      headers: { Authorization: "Bearer saas-access" },
+      credentials: "same-origin",
+      cache: "no-store",
+      redirect: "error",
+    });
+    expect(h.setItem).not.toHaveBeenCalled();
+  });
+
+  it.each([{}, Array.from({ length: 101 }, () => registeredDevice)])(
+    "拒绝非法或超限登记目录，不接受部分伪造在线信息",
+    async (body) => {
+      const h = authFixture(async (url) =>
+        Response.json(String(url).endsWith("/devices") ? body : grantBody()),
+      );
+      await expect(
+        h.auth.listRegisteredDevices(new AbortController().signal),
+      ).rejects.toMatchObject({
+        reason: "relay-unavailable",
+      });
+      expect(h.auth.getZCodeJwtToken()).toBe(relayGrant);
+    },
+  );
+
+  it("登记接口401经唯一session刷新owner刷新一次，并以新Bearer重试", async () => {
+    let lists = 0;
+    const fetcher = vi.fn<typeof fetch>(async (url) => {
+      if (String(url).endsWith("/refresh"))
+        return Response.json({ access_token: "rotated-access", refresh_token: "rotated-refresh" });
+      if (String(url).endsWith("/devices"))
+        return ++lists === 1
+          ? new Response(null, { status: 401 })
+          : Response.json([registeredDevice]);
+      return Response.json(grantBody());
+    });
+    const h = authFixture(fetcher);
+    await expect(h.auth.listRegisteredDevices(new AbortController().signal)).resolves.toHaveLength(
+      1,
+    );
+    expect(fetcher.mock.calls.map(([url]) => new URL(String(url)).pathname)).toEqual([
+      "/api/desktop-relay/terminal-grants",
+      "/api/devices",
+      "/api/auth/refresh",
+      "/api/desktop-relay/terminal-grants",
+      "/api/devices",
+    ]);
+    expect(fetcher.mock.lastCall![1]).toMatchObject({
+      headers: { Authorization: "Bearer rotated-access" },
+    });
+    expect(h.setItem.mock.calls.some(([, value]) => value.startsWith("rc_"))).toBe(false);
+  });
+
+  it("登记接口再次401停止重试，500不刷新或清理有效账号", async () => {
+    for (const status of [401, 500]) {
+      let lists = 0;
+      const h = authFixture(async (url) => {
+        if (String(url).endsWith("/refresh"))
+          return Response.json({
+            access_token: "rotated-access",
+            refresh_token: "rotated-refresh",
+          });
+        if (String(url).endsWith("/devices")) {
+          lists++;
+          return new Response("sensitive response", { status });
+        }
+        return Response.json(grantBody());
+      });
+      await expect(
+        h.auth.listRegisteredDevices(new AbortController().signal),
+      ).rejects.toMatchObject({
+        reason: status === 401 ? "auth-required" : "relay-unavailable",
+      });
+      expect(lists).toBe(status === 401 ? 2 : 1);
+      expect(h.values.has("access_token")).toBe(true);
+      expect(h.auth.getSessionIdentity()).toBe(principal);
+    }
+  });
+
+  it("登记401等待现有grant轮换结束，再由同一owner刷新失效根凭据", async () => {
+    let grants = 0;
+    let lists = 0;
+    let finishList!: (response: Response) => void;
+    let finishGrant!: (response: Response) => void;
+    const fetcher = vi.fn<typeof fetch>((url) => {
+      if (String(url).endsWith("/refresh"))
+        return Promise.resolve(
+          Response.json({ access_token: "rotated-access", refresh_token: "rotated-refresh" }),
+        );
+      if (String(url).endsWith("/devices")) {
+        if (++lists === 1)
+          return new Promise((resolve) => {
+            finishList = resolve;
+          });
+        return Promise.resolve(Response.json([registeredDevice]));
+      }
+      if (++grants === 2)
+        return new Promise((resolve) => {
+          finishGrant = resolve;
+        });
+      return Promise.resolve(Response.json(grantBody()));
+    });
+    const h = authFixture(fetcher);
+    await h.auth.prepareSession(new AbortController().signal);
+    const listing = h.auth.listRegisteredDevices(new AbortController().signal);
+    await vi.waitFor(() => expect(finishList).toBeTypeOf("function"));
+    const renewing = h.auth.prepareSession(new AbortController().signal, true);
+    finishList(new Response(null, { status: 401 }));
+    expect(fetcher.mock.calls.filter(([url]) => String(url).endsWith("/refresh"))).toHaveLength(0);
+    finishGrant(Response.json(grantBody(rotatedGrant)));
+    await renewing;
+    await expect(listing).resolves.toHaveLength(1);
+    expect(fetcher.mock.calls.filter(([url]) => String(url).endsWith("/refresh"))).toHaveLength(1);
+    expect(lists).toBe(2);
+    expect(h.values.get("access_token")).toBe("rotated-access");
+  });
+
+  it("JSON正文读取期间换账号，旧目录不能进入投影或清理新凭据", async () => {
+    let finishBody!: (body: unknown) => void;
+    const h = authFixture(async (url) => {
+      if (!String(url).endsWith("/devices")) return Response.json(grantBody());
+      return {
+        ok: true,
+        status: 200,
+        json: () =>
+          new Promise((resolve) => {
+            finishBody = resolve;
+          }),
+      } as Response;
+    });
+    const listing = h.auth.listRegisteredDevices(new AbortController().signal);
+    await vi.waitFor(() => expect(finishBody).toBeTypeOf("function"));
+    h.values.set("access_token", "new-account-access");
+    finishBody([registeredDevice]);
+    await expect(listing).rejects.toMatchObject({ reason: "relay-unavailable" });
+    expect(h.values.get("access_token")).toBe("new-account-access");
+  });
+
+  it("登记401等待期间完整principal改变，不再为旧目录刷新新身份", async () => {
+    let grants = 0;
+    let finishList!: (response: Response) => void;
+    let finishGrant!: (response: Response) => void;
+    const fetcher = vi.fn<typeof fetch>((url) => {
+      if (String(url).endsWith("/devices"))
+        return new Promise((resolve) => {
+          finishList = resolve;
+        });
+      if (++grants === 2)
+        return new Promise((resolve) => {
+          finishGrant = resolve;
+        });
+      return Promise.resolve(Response.json(grantBody()));
+    });
+    const h = authFixture(fetcher);
+    await h.auth.prepareSession(new AbortController().signal);
+    const listing = h.auth.listRegisteredDevices(new AbortController().signal);
+    const rejected = expect(listing).rejects.toMatchObject({ reason: "relay-unavailable" });
+    await vi.waitFor(() => expect(finishList).toBeTypeOf("function"));
+    const renewing = h.auth.prepareSession(new AbortController().signal, true);
+    finishList(new Response(null, { status: 401 }));
+    finishGrant(Response.json(grantBody(rotatedGrant, otherPrincipal)));
+    await renewing;
+    await rejected;
+    expect(fetcher.mock.calls.filter(([url]) => String(url).endsWith("/refresh"))).toHaveLength(0);
+    expect(h.auth.getSessionIdentity()).toBe(otherPrincipal);
+    expect(h.values.get("access_token")).toBe("saas-access");
+  });
+
+  it.each(["root-token", "principal", "cancel", "dispose"])(
+    "丢弃 %s 变化后的迟到登记响应，不清理新账号",
+    async (kind) => {
+      let finish!: (response: Response) => void;
+      let nextPrincipal = principal;
+      const h = authFixture((url) =>
+        String(url).endsWith("/devices")
+          ? new Promise((resolve) => {
+              finish = resolve;
+            })
+          : Promise.resolve(Response.json(grantBody(relayGrant, nextPrincipal))),
+      );
+      await h.auth.prepareSession(new AbortController().signal);
+      const controller = new AbortController();
+      const pending = h.auth.listRegisteredDevices(controller.signal);
+      const rejected = expect(pending).rejects.toBeDefined();
+      await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
+      if (kind === "root-token") h.values.set("access_token", "other-account-access");
+      if (kind === "principal") {
+        nextPrincipal = otherPrincipal;
+        await h.auth.prepareSession(new AbortController().signal, true);
+      }
+      if (kind === "cancel") controller.abort(new DOMException("Cancelled", "AbortError"));
+      if (kind === "dispose") h.auth.dispose();
+      finish(Response.json([registeredDevice]));
+      await rejected;
+      expect(h.values.get("access_token")).toBe(
+        kind === "root-token" ? "other-account-access" : "saas-access",
+      );
+    },
+  );
+
   it("同源现有 Bearer 换内存 rc_；并发请求只签发一次，不写凭据存储", async () => {
     let finish!: (response: Response) => void;
     const fetcher = vi.fn<typeof fetch>(

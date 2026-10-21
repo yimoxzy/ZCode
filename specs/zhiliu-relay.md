@@ -31,6 +31,37 @@ WS完全复用auth*init、pair_status_query、data与auth_ack、pair_status_ack�
 
 adapter 在过期前 30 秒刷新，单请求在途且用代次丢弃 logout/dispose 后的迟到响应。相同 `principal_id` 和目标设备换凭据时，通过原 transport 的 suspend/recoverInBackground 关闭旧 socket、取新一次性 token、恢复既有 replayable attachment；不卸载任务 UI、不复制待执行队列。principal/目标设备变更必须撤销 Entry 导航代次并重新 admission，不能把旧设备列表/任务留给新空间。401 仅尝试一次原刷新端点；仍失败或 403 清内存授权并引导同源织流登录；网络故障不继续使用已失效凭据，原 transport 负责重连退避，服务端仍每 5 秒校验根授权。
 
+### 同账号已登记设备发现
+
+织流 Web 在同一次 Entry 导航中，通过可选 auth 端口读取原 SaaS `GET /api/devices`，与 relay 目录共同生成设备页。SaaS 继续拥有按 user+space 过滤的登记事实；relay 继续唯一拥有 SID 与在线连接。首次登录、没有任何浏览器设备缓存或尚未选择工作目录的客户端，只要已在当前账号和空间登记，即可显示；不创建虚构 SID、不自动授权目录、不新建 Host 或任务队列。
+
+HTTP 仅由 `ZhiliuWebRelayAuth` 执行：固定同源路径、现有 access_token Bearer、`credentials:same-origin`、`cache:no-store`、`redirect:error`。响应最多接受 100 条，逐条校验 UUID、名称与平台长度，过滤撤销/非法记录，仅返回 id/name/platform，丢弃公钥、capabilities、online、workspace_ready 等字段。401 通过原单请求在途的身份刷新 owner 刷新一次并重试；网络/500 不清登录身份。取消、logout、dispose、rootToken 或完整 principal 变化后的旧响应不得进入设备页，也不得清理新账号身份。
+
+Entry 在同一身份和 AbortSignal 下等待两份只读结果，再一次性合并。登记 ID 对应织流 relay MID；没有 relay 记录的设备产生空 `onlineConnections` 行，使用现有离线样式及“已登记，远控未连接”文案。元数据不表明设备当前在线；只有真实 relay 在线 SID 可以选择或自动连接。刷新替换当前结果，不累计登记行；撤销后不再返回的登记行随之移除。织流路径不读取/写入原跨账号的设备名缓存；登记信息仅属于本次内存投影。标准上游 auth 不提供此端口，保持原目录/缓存行为且不请求 SaaS。
+
+```mermaid
+sequenceDiagram
+ participant E as 原 Web Entry
+ participant A as 织流 auth HTTP adapter
+ participant S as 原 SaaS 登记目录
+ participant R as 原 relay
+ E->>A: prepareSession / 固定完整 principal
+ par 同一导航与身份
+ E->>A: listRegisteredDevices(signal)
+ A->>S: GET /api/devices（现有 Bearer）
+ S-->>A: 当前 user+space 的登记资料
+ A->>A: 过滤与白名单；检查 rootToken/principal/取消
+ A-->>E: id/name/platform
+ and
+ E->>R: 原目录请求（rc_）
+ R-->>E: 真实 SID 与在线状态
+ end
+ E->>E: 同身份才一次性合并；登记行不持久化
+ Note over E: 无真实在线 SID 的行禁用，不申请目录授权
+```
+
+回归覆盖：空浏览器缓存下首次发现、在线与登记合并不重复、刷新撤销移除、跨账号/空间迟到结果、401 单次刷新、500 保留登录与取消、metadata 不变成连接依据，以及上游构建零 SaaS 请求。受控浏览器交互场景只验证发现与禁用行，不替代真实客户端到 Host 的远控验收。
+
 ### 活跃 socket 的限次续签（真实验收回归）
 
 已确认根因：Main 的 `authorizeRelay` 原本只在下一次 HTTP/建连时刷新 `rc_`；device socket 已配对或等待 terminal 时收到 300 秒过期 `AUTH_FAILED`，transport 直接终止 manager。Web 虽已有 -30 秒主动刷新，后台计时暂停也可能先收到过期错误。V2 error 不区分过期与撤销，因此不能把所有 `AUTH_FAILED` 当作过期无限重试。

@@ -27,6 +27,7 @@ const copyByLocale = {
     loading: "正在加载设备…",
     online: "在线",
     offline: "离线",
+    registeredDisconnected: "已登记，远控未连接",
     unnamed: "未命名设备",
     connections: (count: number) => `${count} 个连接`,
     notFound: `没看到你的电脑？在电脑端 ${ZHILIU_DESKTOP_ENABLED ? "织流" : "ZCode"} 登录同一账号并开启远程控制，然后刷新。`,
@@ -43,6 +44,7 @@ const copyByLocale = {
     loading: "Loading devices…",
     online: "Online",
     offline: "Offline",
+    registeredDisconnected: "Registered, remote control disconnected",
     unnamed: "Unnamed device",
     connections: (count: number) => `${count} connections`,
     notFound: `Don't see your computer? Sign in to ${ZHILIU_DESKTOP_ENABLED ? "Zhiliu" : "ZCode"} on it with the same account, turn on remote control, then refresh.`,
@@ -104,7 +106,7 @@ function describeDevice(
   const version = single?.meta.version?.trim();
   const parts = online
     ? [platform, version ? `${copy.productName} ${version}` : undefined]
-    : [platform, copy.offline];
+    : [platform, device.registered ? copy.registeredDisconnected : copy.offline];
   const filtered = parts.filter((part): part is string => Boolean(part));
   if (filtered.length === 0) filtered.push(online ? copy.online : copy.offline);
   // 设备 ID 默认隐藏；同组重名时才追加 MID 前 8 位区分，前 8 位不参与身份判断。
