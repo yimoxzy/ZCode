@@ -25,6 +25,8 @@ import {
   resolveZCodeRuntimeEnv,
   sanitizeZCodeRuntimeEnv,
   ZHILIU_DESKTOP_ENABLED,
+  zhiliuManagedRuntimeProfileSchema,
+  type ZhiliuManagedRuntimeProfile,
 } from "@zcode/shared";
 import { DesktopInferenceUnavailableError } from "../zhiliu/managedModelPolicy.js";
 import {
@@ -64,6 +66,10 @@ export type ZCodeAgentCommandResolver = (
 ) => Promise<ZCodeAgentCommand | null> | ZCodeAgentCommand | null;
 
 export interface ZCodeAgentProcessManagerOptions {
+  /** 可信Host注入；CLI只拿本机capability，不拿平台授权。 */
+  resolveManagedRuntimeProfile?: (
+    context: ZCodeAgentCommandResolverContext,
+  ) => Promise<ZhiliuManagedRuntimeProfile>;
   commandResolver?: ZCodeAgentCommandResolver;
   presentationSurface?: ZCodeAgentPresentationSurface;
   requestTimeoutMs?: number;
@@ -585,6 +591,7 @@ export class ZCodeAgentProcessManager {
   private readonly runtimeLifecycleEmitter = new Emitter<ZCodeAgentRuntimeLifecycleEvent>();
   private disposeAllInFlight: Promise<void> | undefined;
   private disposed = false;
+  private readonly resolveManagedRuntimeProfile?: ZCodeAgentProcessManagerOptions["resolveManagedRuntimeProfile"];
 
   /** 进程换代通知（generation>1 时触发）；v4 订阅方据此重订，见 ZCodeAgentRuntimeRestartedEvent。 */
   readonly onRuntimeRestarted = this.runtimeRestartedEmitter.event;
@@ -592,6 +599,7 @@ export class ZCodeAgentProcessManager {
   readonly onRuntimeLifecycle = this.runtimeLifecycleEmitter.event;
 
   constructor(options?: ZCodeAgentProcessManagerOptions) {
+    this.resolveManagedRuntimeProfile = options?.resolveManagedRuntimeProfile;
     this.commandResolver = options?.commandResolver ?? resolveDefaultZCodeAgentCommand;
     this.presentationSurface = options?.presentationSurface;
     this.requestTimeoutMs = options?.requestTimeoutMs;
@@ -850,7 +858,8 @@ export class ZCodeAgentProcessManager {
   }): Promise<ZCodeProtocolClient> {
     // CLI 即使只读启动也会解析 HOME/项目/env 的模型配置；托管网关未接通前必须在
     // 命令解析、环境读取和子进程启动之前统一拒绝，不能仅依赖 UI 或 readiness。
-    if (ZHILIU_DESKTOP_ENABLED) throw new DesktopInferenceUnavailableError();
+    if (ZHILIU_DESKTOP_ENABLED && !this.resolveManagedRuntimeProfile)
+      throw new DesktopInferenceUnavailableError();
     if (this.disposed) {
       throw new Error("ZCode agent process manager is disposed.");
     }
@@ -985,7 +994,10 @@ export class ZCodeAgentProcessManager {
     if (admissionSignal.aborted) {
       throw admissionSignal.reason ?? new Error("ZCode agent process start was cancelled.");
     }
-    const effectiveCommand = wrapZCodeAgentCommandWithStdioTapDevProxy(command, workspaceKey);
+    // 托管首帧含本机capability，禁止开发stdio tap把该秘密写入磁盘轨迹。
+    const effectiveCommand = this.resolveManagedRuntimeProfile
+      ? command
+      : wrapZCodeAgentCommandWithStdioTapDevProxy(command, workspaceKey);
     log("ZCode agent command resolved", {
       workspaceKey,
       command: command.command,
@@ -1034,24 +1046,43 @@ export class ZCodeAgentProcessManager {
       spawnPreflight,
     });
     const spawnRequestedAt = Date.now();
-    const child = spawn(effectiveCommand.command, spawnPreflight.args, {
-      cwd: spawnPreflight.cwd,
-      // agent 可能再派生实际 runtime/MCP 子进程。POSIX 下让 wrapper 进入独立进程组，
-      // 关闭时才能按进程树整体回收；Windows 保持非 detached，交给 taskkill /T 处理。
-      detached: shouldSpawnInDetachedProcessGroup(),
-      env: {
-        ...sanitizeZCodeRuntimeEnv(process.env),
-        [ZCODE_RUNTIME_ENV_KEY]: runtimeEnv,
-        ...spawnEnv,
-        ...effectiveCommand.env,
-        // 生成文件根目录由执行端 Host 唯一决定，保证 Agent 写入与 Host 读取授权一致。
-        [GEN_UI_OUTPUT_ROOT_ENV]: join(getAppConfigDir(), GEN_UI_OUTPUT_DIRECTORY),
-        // 身份/隔离语义使用 workspaceIdentity；cwd 继续使用 workspacePath。
-        ...buildAgentWorkspaceIdentityEnv(params.workspaceIdentity),
-        ...buildE2EAgentCoverageEnv(),
+    const managedProfile = this.resolveManagedRuntimeProfile
+      ? zhiliuManagedRuntimeProfileSchema.parse(
+          await this.resolveManagedRuntimeProfile({ ...params, workspaceKey }),
+        )
+      : undefined;
+    admissionSignal.throwIfAborted();
+    if (
+      this.disposed ||
+      (this.restartGenerationByWorkspaceKey.get(workspaceKey) ?? 0) !== startGeneration
+    )
+      throw new Error("ZCode agent process start was cancelled.");
+    const child = spawn(
+      effectiveCommand.command,
+      managedProfile ? [...spawnPreflight.args, "--managed-profile-stdin"] : spawnPreflight.args,
+      {
+        cwd: spawnPreflight.cwd,
+        // agent 可能再派生实际 runtime/MCP 子进程。POSIX 下让 wrapper 进入独立进程组，
+        // 关闭时才能按进程树整体回收；Windows 保持非 detached，交给 taskkill /T 处理。
+        detached: shouldSpawnInDetachedProcessGroup(),
+        env: {
+          ...sanitizeZCodeRuntimeEnv(process.env),
+          [ZCODE_RUNTIME_ENV_KEY]: runtimeEnv,
+          ...spawnEnv,
+          ...effectiveCommand.env,
+          // 生成文件根目录由执行端 Host 唯一决定，保证 Agent 写入与 Host 读取授权一致。
+          [GEN_UI_OUTPUT_ROOT_ENV]: join(getAppConfigDir(), GEN_UI_OUTPUT_DIRECTORY),
+          // 身份/隔离语义使用 workspaceIdentity；cwd 继续使用 workspacePath。
+          ...buildAgentWorkspaceIdentityEnv(params.workspaceIdentity),
+          ...buildE2EAgentCoverageEnv(),
+        },
+        stdio: ["pipe", "pipe", "pipe"],
       },
-      stdio: ["pipe", "pipe", "pipe"],
-    });
+    );
+    if (managedProfile) {
+      // 首帧在协议client创建之前写入，Renderer/RPC无机会注入或覆盖模型授权。
+      child.stdin.write(`${JSON.stringify(managedProfile)}\n`);
+    }
     const startedAt = Date.now();
     const stderrTail = createAgentStderrTail();
     const transport = new ZCodeStdioTransport(child, {
@@ -1434,6 +1465,27 @@ export class ZCodeAgentProcessManager {
         "workspace dispose",
       );
     }
+  }
+
+  /** 授权失效回收所有泳道，但保留manager用于下一次明确登录。 */
+  async invalidateManagedRuntime(target?: {
+    workspacePath: string;
+    workspaceIdentity?: string;
+  }): Promise<void> {
+    if (target) {
+      await this.disposeWorkspace(target);
+      return;
+    }
+    const targets = new Map<string, { workspacePath: string; workspaceIdentity?: string }>();
+    for (const [key, process] of this.processesByWorkspaceKey) targets.set(key, process.workspace);
+    for (const key of this.startingByWorkspaceKey.keys()) {
+      this.restartGenerationByWorkspaceKey.set(
+        key,
+        (this.restartGenerationByWorkspaceKey.get(key) ?? 0) + 1,
+      );
+      this.abortPendingStarts(key);
+    }
+    await Promise.all([...targets.values()].map((target) => this.disposeWorkspace(target)));
   }
 
   private abortPendingStarts(

@@ -14,13 +14,13 @@ export async function rejectPersonalModelOperation(): Promise<never> {
   throw new ManagedModelsOnlyError();
 }
 
-/** 网关尚未接入时关闭整个 CLI 启动边界，避免初始化时恢复旧配置或环境变量凭据。 */
+/** 托管授权未就绪时关闭CLI启动边界，避免恢复个人配置或环境凭据。 */
 export class DesktopInferenceUnavailableError extends Error {
   readonly code = "zhiliu_desktop_inference_unavailable";
 
   constructor() {
     super(
-      "本地项目尚未接入织流账号授权与积分计费，暂不启动本地 Agent。请登录云 Agent 使用平台模型。",
+      "本地 Agent 授权尚未就绪，请先登录织流账号或稍后重试。",
     );
     this.name = "DesktopInferenceUnavailableError";
   }

@@ -1,0 +1,24 @@
+{
+  "name": "@zhiliu/relay",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "esbuild src/entry.ts --bundle --platform=node --format=cjs --outfile=dist/relay.cjs",
+    "start": "node dist/relay.cjs",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@zcode/shared": "workspace:*",
+    "ws": "^8.20.0",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.0",
+    "@types/ws": "^8.18.1",
+    "esbuild": "^0.25.0",
+    "typescript": "^6.0.2"
+  }
+}

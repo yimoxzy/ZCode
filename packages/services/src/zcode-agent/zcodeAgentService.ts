@@ -1220,7 +1220,10 @@ export function resolveOffPeakToolSelection(
 }
 export function createZCodeAgentService(
   options?: CreateZCodeAgentServiceOptions,
-): IZCodeAgentService & { disposeAllAndWait(): Promise<void> } {
+): IZCodeAgentService & {
+  disposeAllAndWait(): Promise<void>;
+  invalidateManagedRuntime(target?: ZCodeAgentWorkspaceTarget): Promise<void>;
+} {
   const processManager = new ZCodeAgentProcessManager(options);
   // Windows indicator 与 macOS producer lifecycle client 共用已校验、去重的 sideband facts。
   const cuaOperationTurnTracker =
@@ -1244,6 +1247,7 @@ export function createZCodeAgentService(
   const automationService = new AutomationService(automationRepo, options?.prepareProjectExecution);
   const automationTaskIndexRepo = new TaskIndexRepo();
   const pluginProcessManager = new ZCodeAgentProcessManager({
+    resolveManagedRuntimeProfile: options?.resolveManagedRuntimeProfile,
     commandResolver: options?.commandResolver,
     presentationSurface: options?.presentationSurface,
     requestTimeoutMs: options?.requestTimeoutMs,
@@ -1253,6 +1257,7 @@ export function createZCodeAgentService(
   // 合并时误删了独立进程：mcp/list 的慢握手会堵住串行 stdio 队列，连带卡住插件卸载。
   // 恢复专用控制面进程及空闲回收；共享 workspace 路径，不共享请求队列或 watchdog。
   const mcpStatusProcessManager = new ZCodeAgentProcessManager({
+    resolveManagedRuntimeProfile: options?.resolveManagedRuntimeProfile,
     commandResolver: options?.commandResolver,
     presentationSurface: options?.presentationSurface,
     processLifecycleReporter: options?.processLifecycleReporter,
@@ -1382,7 +1387,11 @@ export function createZCodeAgentService(
   const accountConfigReceivedRevisionByClient = new WeakMap<ZCodeProtocolClient, string>();
   const sessionTraceIdBySessionKey = new Map<string, TraceId>();
   const accountRequestAuthService = options?.accountRequestAuthService;
-  const accountProviderConfigSource = options?.accountProviderConfigSource;
+  // 托管 CLI 的模型目录只来自可信首帧；沿用官方账号配置同步会尝试覆盖该目录，
+  // 既被 CLI 正确拒绝，也会意外阻断首次登录后的真实 Host 预热。
+  const accountProviderConfigSource = options?.resolveManagedRuntimeProfile
+    ? undefined
+    : options?.accountProviderConfigSource;
   const modelSelectionReadinessSource = options?.modelSelectionReadinessSource;
   const sessionRuntimePreferencesAuthority = options?.sessionRuntimePreferencesAuthority ?? "local";
   const resolveSessionRuntimePreferences = options?.resolveSessionRuntimePreferences;
@@ -3409,7 +3418,13 @@ export function createZCodeAgentService(
   }
 
   async function getClient(params: ZCodeAgentWorkspaceTarget) {
-    if (ZHILIU_DESKTOP_ENABLED) throw new DesktopInferenceUnavailableError();
+    if (ZHILIU_DESKTOP_ENABLED && !options?.resolveManagedRuntimeProfile)
+      throw new DesktopInferenceUnavailableError();
+    if (options?.resolveManagedRuntimeProfile)
+      await options.resolveManagedRuntimeProfile({
+        ...params,
+        workspaceKey: resolveWorkspaceKey(params),
+      });
     const workspaceKey = resolveWorkspaceKey(params);
     const active = activeClientsByWorkspaceKey.get(workspaceKey);
     if (active?.modelExecutionEnabled && isReusableActiveClientEntry(params, active)) {
@@ -6752,6 +6767,21 @@ export function createZCodeAgentService(
       // workspace/service 真 teardown。销毁 workspace emitter 会让既有 UI/task-index
       // listener 永久绑在死对象上；emitters 只由 disposeLocalState/disposeAll 释放。
       await processManager.disposeWorkspace(params);
+    },
+
+    async invalidateManagedRuntime(target?: ZCodeAgentWorkspaceTarget): Promise<void> {
+      const workspaceKey = target ? resolveWorkspaceKey(target) : undefined;
+      if (workspaceKey) {
+        cancelWaitingWorkspaceStartup(workspaceKey);
+        clearV4SubscriptionRoutes(workspaceKey);
+      } else cancelAllWaitingWorkspaceStartups();
+      for (const [key, entry] of activeClientsByWorkspaceKey)
+        if (!workspaceKey || key === workspaceKey) invalidateWorkspaceClient(key, entry.client);
+      await Promise.all(
+        [processManager, pluginProcessManager, mcpStatusProcessManager].map((manager) =>
+          manager.invalidateManagedRuntime(target),
+        ),
+      );
     },
 
     disposeAll(): void {

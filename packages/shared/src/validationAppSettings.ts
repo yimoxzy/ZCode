@@ -145,6 +145,7 @@ const appWorkspaceSessionEntrySchema = z.discriminatedUnion("kind", [
 ]);
 
 const webRemoteControlRelayV2DeviceSchema = z.object({
+  deviceMid: z.string().min(1).max(128).optional(),
   deviceSid: z.string().min(1),
   userId: z.string().min(1),
   endpointOrigin: z.url(),

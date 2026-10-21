@@ -1,10 +1,23 @@
 import { app, dialog, safeStorage, type MessageBoxOptions } from "electron";
 import { join } from "node:path";
+import { createHash } from "node:crypto";
+import {
+  DEFAULT_ZHILIU_RUNTIME_SELECTION,
+  resolveWorkspaceKey,
+  zhiliuRuntimeSelectionInputSchema,
+  zhiliuRuntimeWorkspaceSchema,
+  type ZhiliuRuntimeSelection,
+  type ZhiliuRuntimeWorkspace,
+} from "@zcode/shared";
 import { resolveZhiliuCloudTarget } from "./zhiliuCloudPolicy.js";
 import {
   beginZhiliuAccountAuthorization,
   createZhiliuAccountBootstrap,
+  createZhiliuRuntimeGrant,
+  createZhiliuRelayGrant,
+  revokeZhiliuRuntimeGrant,
   fetchZhiliuAccountSession,
+  fetchZhiliuRuntimeCatalog,
   revokeZhiliuAccount,
   ZhiliuAccountHttpError,
   ZhiliuAccountSecureStore,
@@ -33,6 +46,8 @@ export interface ZhiliuAccountAuthOptions {
   http?: typeof fetch;
   now?: () => number;
   wait?: (milliseconds: number, signal: AbortSignal) => Promise<void>;
+  onSignedIn?: () => void;
+  onRuntimeSelectionChanged?: (workspaceIdentity: string) => Promise<void>;
 }
 function waitForPoll(milliseconds: number, signal: AbortSignal) {
   return new Promise<void>((resolve) => {
@@ -85,6 +100,19 @@ export function createZhiliuAccountAuth(options: ZhiliuAccountAuthOptions) {
   let pollAbort = new AbortController();
   let credentialOperation = Promise.resolve(),
     cloudOperation = Promise.resolve();
+  const runtimeGrants = new Map<string, StoredZhiliuAccount>();
+  const runtimeSelections = new Map<string, ZhiliuRuntimeSelection>();
+  const selectionGenerations = new Map<string, number>();
+  const selectionBarriers = new Map<string, Promise<void>>();
+  const clearRuntimeSelections = () => {
+    runtimeSelections.clear();
+    selectionGenerations.clear();
+    selectionBarriers.clear();
+  };
+  const runtimeIdentity = (target: ZhiliuRuntimeWorkspace) =>
+    `local:${createHash("sha256").update(resolveWorkspaceKey(target)).digest("hex")}`;
+  let relayGrant: Awaited<ReturnType<typeof createZhiliuRelayGrant>> | undefined;
+  let relayStarting: Promise<Awaited<ReturnType<typeof createZhiliuRelayGrant>>> | undefined;
   const withCredentials = <T>(operation: () => Promise<T>): Promise<T> => {
     const result = credentialOperation.then(operation);
     credentialOperation = result.then(
@@ -153,12 +181,16 @@ export function createZhiliuAccountAuth(options: ZhiliuAccountAuthOptions) {
     validationPromise = undefined;
     pollAbort.abort();
     current = null;
+    relayGrant = undefined;
+    relayStarting = undefined;
+    clearRuntimeSelections();
     projection = loggedOut("登录已失效，请重新授权");
     // 单次写删串行不能覆盖断开 Host 的网络等待；先发布整次清理屏障，
     // 防止这段等待内的新登录被旧 remove/clear 删除凭据或关闭云窗。
     const cleanup = Promise.resolve().then(async () => {
       await options.pauseComputer();
       await options.disconnectComputer().catch(() => undefined);
+      runtimeGrants.clear();
       await withCredentials(() => store.remove(record.origin));
       await withCloud(() => options.clearCloudSession(record.origin));
     });
@@ -266,7 +298,9 @@ export function createZhiliuAccountAuth(options: ZhiliuAccountAuthOptions) {
         return cancelled();
       }
       current = accepted;
-      return authenticated(accepted.credential);
+      const result = authenticated(accepted.credential);
+      options.onSignedIn?.();
+      return result;
     } catch {
       if (received) await discardReceived(received).catch(() => revokeQuietly(received!));
       if (generation === epoch)
@@ -331,6 +365,9 @@ export function createZhiliuAccountAuth(options: ZhiliuAccountAuthOptions) {
       });
       if (answer.response !== 1) return { confirmed: false, remoteRevoked: false };
       generation++;
+      relayGrant = undefined;
+      relayStarting = undefined;
+      clearRuntimeSelections();
       validationPromise = undefined;
       pollAbort.abort();
       browserUrl = undefined;
@@ -352,6 +389,8 @@ export function createZhiliuAccountAuth(options: ZhiliuAccountAuthOptions) {
       } catch {
         localFailure = true;
       }
+      // Host已停止/撤销后清掉旧根凭据引用；迟到的授权仍由generation检查直接撤销。
+      runtimeGrants.clear();
       try {
         await withCredentials(async () => {
           record ??= await store.read(origin).catch(() => null);
@@ -407,5 +446,131 @@ export function createZhiliuAccountAuth(options: ZhiliuAccountAuthOptions) {
       spaceId: current.credential.space_id,
     };
   };
-  return { login, logout, status, getStatus: () => validate(false), authorizeCloud, cancelLogin, getDeviceIdentity };
+  const authorizeRuntime = async (workspaceIdentity: string) => {
+    if (invalidationCleanup) await invalidationCleanup;
+    if (logoutPromise) await logoutPromise;
+    if ((await validate(true)).phase !== "authenticated" || !current)
+      throw new Error("请先登录织流账号");
+    const record = current,
+      epoch = generation;
+    for (;;) {
+      const barrier = selectionBarriers.get(workspaceIdentity);
+      if (!barrier) break;
+      await barrier;
+      const next = selectionBarriers.get(workspaceIdentity);
+      if (!next || next === barrier) break;
+    }
+    if (generation !== epoch || current !== record) throw new Error("织流授权已失效");
+    const selectionEpoch = selectionGenerations.get(workspaceIdentity) ?? 0;
+    const value = await createZhiliuRuntimeGrant(
+      record,
+      workspaceIdentity,
+      http,
+      now,
+      runtimeSelections.get(workspaceIdentity),
+    );
+    // 退出期间迟到的grant只能撤销，不能交给Host复活旧身份。
+    if (
+      generation !== epoch ||
+      current !== record ||
+      (selectionGenerations.get(workspaceIdentity) ?? 0) !== selectionEpoch
+    ) {
+      await revokeZhiliuRuntimeGrant(record, value.grant.grant_id, http).catch(() => {});
+      throw new Error("织流授权已失效");
+    }
+    runtimeGrants.set(value.grant.grant_id, record);
+    return value;
+  };
+  const getRuntimeSelection = async (input: unknown) => {
+    const target = zhiliuRuntimeWorkspaceSchema.parse(input);
+    if ((await validate(true)).phase !== "authenticated" || !current)
+      throw new Error("请先登录织流账号");
+    const record = current,
+      epoch = generation;
+    const catalog = await fetchZhiliuRuntimeCatalog(record, http);
+    if (generation !== epoch || current !== record) throw new Error("织流授权已失效");
+    return {
+      catalog,
+      selection: structuredClone(
+        runtimeSelections.get(runtimeIdentity(target)) ?? DEFAULT_ZHILIU_RUNTIME_SELECTION,
+      ),
+    };
+  };
+  const setRuntimeSelection = async (input: unknown) => {
+    const parsed = zhiliuRuntimeSelectionInputSchema.parse(input);
+    const target = {
+      workspacePath: parsed.workspacePath,
+      ...(parsed.workspaceIdentity ? { workspaceIdentity: parsed.workspaceIdentity } : {}),
+    };
+    const { catalog } = await getRuntimeSelection(target);
+    if (
+      parsed.selection.agent_id &&
+      !catalog.agents.some((item) => item.id === parsed.selection.agent_id)
+    )
+      throw new Error("此Agent暂不可用，请刷新后重试");
+    if (
+      parsed.selection.inference_profile_id &&
+      !catalog.inference_profiles.some((item) => item.id === parsed.selection.inference_profile_id)
+    )
+      throw new Error("此思考档位暂不可用，请刷新后重试");
+    const identity = runtimeIdentity(target),
+      epoch = generation,
+      record = current;
+    const previous = selectionBarriers.get(identity);
+    selectionGenerations.set(identity, (selectionGenerations.get(identity) ?? 0) + 1);
+    const operation = (async () => {
+      await previous?.catch(() => {});
+      if (generation !== epoch || current !== record) throw new Error("织流授权已失效");
+      // Fail closed when Host teardown cannot be confirmed; next grants await this exact barrier.
+      if (!options.onRuntimeSelectionChanged) throw new Error("本地Agent切换尚未就绪");
+      await options.onRuntimeSelectionChanged(identity);
+      if (generation !== epoch || current !== record) throw new Error("织流授权已失效");
+      runtimeSelections.set(identity, structuredClone(parsed.selection));
+    })();
+    selectionBarriers.set(identity, operation);
+    await operation;
+    if (selectionBarriers.get(identity) === operation) selectionBarriers.delete(identity);
+    return getRuntimeSelection(target);
+  };
+  const revokeRuntime = async (grantId: string) => {
+    const record = runtimeGrants.get(grantId);
+    runtimeGrants.delete(grantId);
+    if (record) await revokeZhiliuRuntimeGrant(record, grantId, http);
+  };
+  const authorizeRelay = async () => {
+    if (invalidationCleanup) await invalidationCleanup;
+    if (logoutPromise) await logoutPromise;
+    if ((await validate(false)).phase !== "authenticated" || !current) return undefined;
+    if (relayGrant && Date.parse(relayGrant.expires_at) > now() + 30000) return relayGrant;
+    if (relayStarting) return relayStarting;
+    const record = current,
+      epoch = generation;
+    const operation = createZhiliuRelayGrant(record, record.credential.device_id, http, now).then(
+      (value) => {
+        if (generation !== epoch || current !== record) throw new Error("织流远控授权已断开");
+        relayGrant = value;
+        return value;
+      },
+    );
+    relayStarting = operation;
+    try {
+      return await operation;
+    } finally {
+      if (relayStarting === operation) relayStarting = undefined;
+    }
+  };
+  return {
+    login,
+    logout,
+    status,
+    getStatus: () => validate(false),
+    authorizeCloud,
+    cancelLogin,
+    getDeviceIdentity,
+    authorizeRuntime,
+    revokeRuntime,
+    authorizeRelay,
+    getRuntimeSelection,
+    setRuntimeSelection,
+  };
 }

@@ -319,6 +319,8 @@ export interface McpConnectOptions {
 export interface McpCallToolRequest {
   serverName: string;
   toolName: string;
+  /** Original model call identity for platform tool deduplication; never an authorization source. */
+  toolCallId?: string;
   arguments?: Record<string, unknown>;
   trace?: TraceContext;
   /** 调用来源；宿主 MCP 可据此限制不能安全继承到 subagent 的能力。 */

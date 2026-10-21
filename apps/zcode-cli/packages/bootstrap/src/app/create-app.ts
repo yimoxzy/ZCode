@@ -111,6 +111,7 @@ import {
 } from "../subagents.js";
 import { createRuntimeAiSdkModelExecutionConfig } from "../model-config.js";
 import { ApiProviderModelRuntime } from "./provider-registry-model-runtime.js";
+import { createManagedContextSource, createManagedSkillPort, createManagedMcpServers, createManagedToolTransport, PLATFORM_MCP_SERVER, PLATFORM_MCP_TOOL_PREFIX } from "../managed-runtime/index.js";
 import {
   completeAppStartup,
   debugRuntimeConfigResolved,
@@ -164,6 +165,24 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
   if (!options?.providerRegistry) {
     throw new Error("createZCodeApp requires a Provider Registry");
   }
+  if (options.managedRuntimeProfile) {
+    options = {
+      ...options, skipUserConfig: true, projectConfigPath: undefined,
+      contextSourcePort: createManagedContextSource(
+        options.contextSourcePort ?? createNodeContextSourceAdapter({ env: options.env }),
+        options.managedRuntimeProfile,
+      ),
+      runtimeConfig: {
+        ...options.runtimeConfig,
+        modelSelection: {
+          providerId: "zhiliu-managed", modelId: "zhiliu-managed",
+          options: { reasoningLevel: options.managedRuntimeProfile.reasoningEffort || "managed" },
+        },
+        toolAllowlist: options.managedRuntimeProfile.toolAllowlist,
+        modelStreamRecoveryEnabled: false,
+      },
+    };
+  }
   const startupStartedAt = startupNow();
   const appVersion = options.version ?? "0.0.0";
   const sessionId = options.sessionId ?? createSessionId();
@@ -173,7 +192,7 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
     createConfig({
       env: options.env,
       projectConfigPath: options.projectConfigPath,
-      workingDirectory,
+      workingDirectory: options.managedRuntimeProfile?.pluginManifest ? undefined : workingDirectory,
       workspaceIdentity: options.runtimeConfig?.memory?.workspaceIdentity,
       skipUserConfig: options.skipUserConfig,
       userConfigPath: options.userConfigPath,
@@ -246,7 +265,7 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
       workingDirectory,
     });
     // 随 CLI 内置的技能包（dynamic-workflows 等）：不属于任何插件，用户无法停用或卸载。
-    const bundledSkillRoots = resolveBundledSkillRoots({ cliStorageRoot, logger });
+    const bundledSkillRoots = options.managedRuntimeProfile?.pluginManifest ? [] : resolveBundledSkillRoots({ cliStorageRoot, logger });
     const pluginTemplates = loadPluginAgentTemplates({ logger, plugins: pluginOutcome.plugins });
     const pluginSubagentProfiles =
       hostSubagentSnapshot?.kind === "built-in-fallback"
@@ -294,7 +313,24 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
         workingDirectory,
         workspaceIdentity: options.runtimeConfig?.memory?.workspaceIdentity,
       });
+    if (options.managedRuntimeProfile?.pluginManifest) {
+      // 可信发布快照的 MCP 不能被普通 session 参数、项目配置或历史恢复扩权。
+      configuredMcpServers = { ...pluginOutcome.mcpServers };
+      runtimeConfig.mcp = { enabled: true, servers: configuredMcpServers };
+      runtimeConfig.hooks = { enabled: false, events: {}, timeoutMs: 60_000, maxOutputBytes: 32_768 };
+      options.skillPort = createManagedSkillPort(pluginOutcome.skillRoots);
+      if (options.managedRuntimeProfile.toolAllowlist?.length === 0) {
+        runtimeConfig.subagents = { ...runtimeConfig.subagents, enabled: false };
+        runtimeConfig.dynamicWorkflowEnabled = false;
+      }
+    }
     const browserControlPort = options.browserControlPort;
+    const platformTools = options.managedRuntimeProfile?.platformTools;
+    if (platformTools) {
+      const platformServers = createManagedMcpServers(platformTools);
+      configuredMcpServers = {...configuredMcpServers, ...platformServers};
+      runtimeConfig.mcp = {...runtimeConfig.mcp, enabled: true, servers: {...runtimeConfig.mcp?.servers, ...platformServers}};
+    }
     if (
       browserControlPort &&
       pluginRuntimeFeatures.browserUse === true &&
@@ -379,7 +415,10 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
         : {}),
     });
     const permissionService = new PermissionService({
-      allowedTools: new Set(configResult.config.permission.allowedTools),
+      approvalRequiredTools: new Set(options.managedRuntimeProfile?.approvalRequiredTools ?? []),
+      allowedTools: new Set([...configResult.config.permission.allowedTools,
+        ...(platformTools ? options.managedRuntimeProfile?.toolAllowlist?.filter(name => name.startsWith(PLATFORM_MCP_TOOL_PREFIX)) ?? [] : []),
+      ]),
       autoApproveHighRisk: configResult.config.permission.autoApproveHighRisk,
       disallowedTools: new Set(configResult.config.permission.disallowedTools),
       allowMediumRiskInAutoMode: configResult.config.permission.allowMediumRiskInAuto,
@@ -412,11 +451,14 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
       storageRoot,
     });
     const mcpPort =
-      options.mcpPort ??
+      (platformTools ? undefined : options.mcpPort) ??
       (runtimeConfig.mcp?.enabled === false
         ? undefined
-        : (options.mcpPortFactory?.({ workingDirectory }) ??
+        : ((platformTools ? undefined : options.mcpPortFactory?.({ workingDirectory })) ??
           createMcpAdapter({
+            ...(platformTools ? {trustedServerTransports: {[PLATFORM_MCP_SERVER]: {
+              url: platformTools.url, fetch: createManagedToolTransport(platformTools), singleAttempt: true,
+            }}} : {}),
             clientVersion: appVersion,
             env: options.env,
             logger,
@@ -427,7 +469,7 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
             },
             workingDirectory,
           })));
-    const ownsMcpPort = options.mcpPort === undefined && mcpPort !== undefined;
+    const ownsMcpPort = mcpPort !== options.mcpPort && mcpPort !== undefined;
     const executionPort =
       options.executionPort ??
       createNodeExecutionAdapter({
@@ -583,6 +625,7 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
     const modelAdapter =
       options.modelAdapter ??
       createModelAdapter({
+        managedRuntimeProfile: options.managedRuntimeProfile,
         env: options.env,
         logger: modelLogger,
         modelIoDir,
@@ -599,7 +642,7 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
     // 不排队、不看冷却，但计入在飞并喂信号。进程级单例——配额本就在账号上，不按会话分。
     // 不再经 adapter 级 addStatusSink 喂信号：同一事件只能沿 ticket 喂一次。
     const workflowConcurrencyGovernor = getWorkflowConcurrencyGovernor();
-    modelAdapter.setModelIoFullRetentionEnabled(options.modelIoFullRetentionEnabled ?? false);
+    modelAdapter.setModelIoFullRetentionEnabled(options.managedRuntimeProfile ? false : options.modelIoFullRetentionEnabled ?? false);
     providerModelRuntime = new ApiProviderModelRuntime({
       registry: options.providerRegistry,
       modelAdapter,
@@ -910,6 +953,7 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
       cliDefaultSelection,
       artifactStore,
       customCommandPromptResolver: async (text, resolverOptions) => {
+        if (options.managedRuntimeProfile?.pluginManifest) return undefined;
         const builtin = resolveZCodeBuiltinPromptCommandInvocation(text, {
           // 动态工作流灰度关闭时内置 `/workflow` 不得展开（DWG-03）。目录侧已经把它从 `/` 面板
           // 剔除，但用户仍可手打命令名，两条路径必须给出同一个结论。独立 CLI 的 TUI 与 headless

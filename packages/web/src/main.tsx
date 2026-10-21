@@ -1,5 +1,6 @@
 import { mobilePluginDiscoveryTelemetrySchema } from "@zcode/shared";
 import {
+  ZHILIU_DESKTOP_ENABLED,
   sessionCreateTelemetrySchema,
   type RendererTelemetryEventPayload,
   WEB_REMOTE_CONTROL_WORKSPACE_RECONNECT_TIMEOUT_MS,
@@ -33,7 +34,6 @@ import {
 } from "@zcode/client";
 
 import { WebCallbackPage } from "./auth/WebCallbackPage.js";
-import { WebLoginPage } from "./auth/WebLoginPage.js";
 import { createWebAuthService } from "./auth/webAuthService.js";
 import { WEB_ZAI_OAUTH_CONFIG, resolveWebAuthDevReturnTo } from "./auth/webZaiOAuthConfig.js";
 import { parseOAuthState, resolveSafeAppReturnTo } from "./auth/oauthStateCodec.js";
@@ -74,6 +74,7 @@ import type {
 
 import {
   WebRemoteControlEntry,
+  ZhiliuWebRelayAuth,
   isWebRemoteControlOAuthCallback,
   type WebRemoteControlEntryConnection,
   createWebRemoteControlV2TokenClient,
@@ -229,6 +230,15 @@ async function resolveFeedbackUrl(): Promise<string | undefined> {
 installDocumentHiddenMotionPause();
 const root = createRoot(document.getElementById("root")!);
 const webAuthService = createWebAuthService();
+const zhiliuRelayAuth = new ZhiliuWebRelayAuth({
+  origin: window.location.origin,
+  storage: {
+    getItem: (key) => window.sessionStorage.getItem(key),
+    setItem: (key, value) => window.sessionStorage.setItem(key, value),
+    removeItem: (key) => window.sessionStorage.removeItem(key),
+  },
+  navigate: (url) => window.location.assign(url),
+});
 let isPageUnloading = false;
 
 // 初始化 Web 端流式 clientId，确保所有 hook 在首次渲染前就使用稳定 ID
@@ -238,6 +248,7 @@ let isPageUnloading = false;
 
 window.addEventListener("beforeunload", () => {
   isPageUnloading = true;
+  zhiliuRelayAuth.dispose();
 });
 
 interface WebRemoteControlPlatformProxy {
@@ -293,16 +304,17 @@ function renderWebRemoteControlFailure(failure: WebRemoteControlFailure): void {
 
 function isWebOAuthCallback(params: URLSearchParams): boolean {
   return (
-    isWebRemoteControlOAuthCallback(new URL(window.location.href)) ||
-    (["/cn/share/callback", "/share/callback"].includes(window.location.pathname) &&
-      params.has("state") &&
-      // BigModel 的 authCode 要先进入回调页，才能由 provider 归一化为 code。
-      (params.has("code") || params.has("authCode") || params.has("error")))
+    ["/cn/share/callback", "/share/callback"].includes(window.location.pathname) &&
+    params.has("state") &&
+    // BigModel 的 authCode 要先进入回调页，才能由 provider 归一化为 code。
+    (params.has("code") || params.has("authCode") || params.has("error"))
   );
 }
 
 function renderWebAuthCallbackPage(): void {
-  document.title = "ZCode - Web Remote Control Sign In";
+  document.title = ZHILIU_DESKTOP_ENABLED
+    ? "织流 - 远程设备登录"
+    : "ZCode - Web Remote Control Sign In";
   const callbackState = parseOAuthState(
     new URLSearchParams(window.location.search).get("state") ?? "",
   );
@@ -394,8 +406,8 @@ async function renderConversationSharePage(): Promise<void> {
 }
 
 function renderWebLoginPage(): void {
-  document.title = "ZCode - Web Remote Control Sign In";
-  root.render(<WebLoginPage onLogin={(provider) => remoteEntry.startLogin(provider)} />);
+  document.title = "织流 - 登录";
+  zhiliuRelayAuth.startLogin({ appReturnTo: window.location.href });
 }
 
 // 访问 window.localStorage 本身在部分浏览器会抛错，统一包在方法里交给调用方兜底。
@@ -405,7 +417,7 @@ const webRemoteControlStorage: Pick<Storage, "getItem" | "setItem"> = {
 };
 
 const remoteEntry = new WebRemoteControlEntry({
-  auth: webAuthService,
+  auth: zhiliuRelayAuth,
   getHref: () => window.location.href,
   replaceHref: (href) => window.history.replaceState(window.history.state, "", href),
   storage: webRemoteControlStorage,
@@ -418,7 +430,6 @@ const remoteEntry = new WebRemoteControlEntry({
     document.addEventListener("visibilitychange", onVisibilityChange);
     return () => document.removeEventListener("visibilitychange", onVisibilityChange);
   },
-  loginOptions: { devReturnTo: resolveWebAuthDevReturnTo(WEB_ZAI_OAUTH_CONFIG) },
   token: createWebRemoteControlV2TokenClient(window.location.origin),
   connect: (connection) => {
     void bootstrapExternalRelayWebRemoteControl(connection);
@@ -427,7 +438,7 @@ const remoteEntry = new WebRemoteControlEntry({
     if (view.kind === "callback") renderWebAuthCallbackPage();
     else if (view.kind === "login") renderWebLoginPage();
     else if (view.kind === "devices") {
-      document.title = "ZCode - Web Remote Control";
+      document.title = "织流 - 远程设备";
       root.render(
         <WebRemoteControlDeviceListPage
           view={view}
@@ -1052,7 +1063,7 @@ function renderWebRemoteControlLoading(
   state: WebRemoteControlTerminalTransportState,
   device: WebRemoteControlConnectingDevice,
 ): void {
-  document.title = "ZCode - Web Remote Control";
+  document.title = ZHILIU_DESKTOP_ENABLED ? "织流 - 远程工作台" : "ZCode - Web Remote Control";
   root.render(
     <WebRemoteControlLoadingScreen
       state={state}
@@ -1212,6 +1223,7 @@ async function bootstrapExternalRelayWebRemoteControl(
   const disposeConnection = () => {
     if (terminated) return;
     terminated = true;
+    unsubscribeRelayCredential?.();
     if (bridgeRecoveryRetryTimer) clearTimeout(bridgeRecoveryRetryTimer);
     bridgeRecoveryRetryTimer = undefined;
     versionGuard.dispose();
@@ -1763,7 +1775,7 @@ async function bootstrapExternalRelayWebRemoteControl(
   ) => {
     if (terminated || versionGuard.isBlocked()) return;
     ready = true;
-    document.title = "ZCode - Web Remote Control";
+    document.title = ZHILIU_DESKTOP_ENABLED ? "织流 - 远程工作台" : "ZCode - Web Remote Control";
     root.render(
       <AppErrorBoundary key={bridge.bridgeSessionId}>
         <ZCodeIntlProvider
@@ -1887,7 +1899,7 @@ async function bootstrapExternalRelayWebRemoteControl(
     currentWorkspaceKey = workspaceKey;
     currentTaskId = taskId;
     await updateMobileViewState(workspaceKey, taskId);
-    document.title = "ZCode - Web Remote Control";
+    document.title = ZHILIU_DESKTOP_ENABLED ? "织流 - 远程工作台" : "ZCode - Web Remote Control";
     if (terminated || versionGuard.isBlocked()) return;
     // Bug 原因：staging 合并 a861a83cbc 丢了这里的 ready 标记，home-only 挂载后每次配对状态抖动
     // 都会被 onStateChange 当成首屏重渲染加载页，配对恢复后再整页重挂，引导与本地状态全部丢失。
@@ -2023,6 +2035,11 @@ async function bootstrapExternalRelayWebRemoteControl(
       void recoverVisibleSession(reason);
     },
   });
+  const unsubscribeRelayCredential = connection.subscribeCredentialChanged?.(() => {
+    if (terminated || versionGuard.isBlocked()) return;
+    transport.suspend();
+    transport.recoverInBackground();
+  });
   window.addEventListener("beforeunload", disposeConnection, { once: true });
   connection.signal.addEventListener("abort", disposeConnection, { once: true });
   transport.start();
@@ -2068,7 +2085,7 @@ async function bootstrapWebApp() {
       onClose: () => {},
     });
     const platform = createWebPlatform();
-    document.title = "ZCode - Web + Server";
+    document.title = ZHILIU_DESKTOP_ENABLED ? "织流 - 工作台" : "ZCode - Web + Server";
 
     root.render(
       <AppErrorBoundary>

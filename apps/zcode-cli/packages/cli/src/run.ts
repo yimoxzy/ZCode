@@ -24,6 +24,7 @@ import { runCommandsCommand } from "./commands-command.js";
 import { resolveCliCwd } from "./cwd.js";
 import { runLoginCommand, runLogoutCommand } from "./login-command.js";
 import { CLI_COMMAND_NAME, CLI_PROCESS_NAME } from "./process-name.js";
+import { readManagedPrompt, readManagedRuntimeProfile } from "./managed-profile-input.js";
 import { isPluginHostInvocation, runPluginHostCommand } from "./plugin-host-command.js";
 import { isDwfChildInvocation, runDwfChildCommand } from "./dwf-child-command.js";
 import { runPrompt } from "./prompt-command.js";
@@ -262,7 +263,7 @@ const runZCodeProtocolCommand = async (
     // 打包态 app-server 是 desktop host 的内部协议子进程。
     // 如果这里继续从 workspace 向上读取用户 .env，读文件失败或环境污染会在协议建立前
     // 直接退出，外层只能看到 ZCode agent transport closed。
-    const dotenvResult = shouldLoadCliDotenvForProtocolServer(env)
+    const dotenvResult = !deps.managedRuntimeProfile && shouldLoadCliDotenvForProtocolServer(env)
       ? (deps.loadDotenv ?? loadCliDotenv)({
           cwd: workingDirectory,
           env,
@@ -282,6 +283,7 @@ const runZCodeProtocolCommand = async (
     const runProtocolAgent =
       deps.runZCodeProtocolAgent ?? (await loadBootstrapModule()).runZCodeProtocolAgent;
     await runProtocolAgent({
+      managedRuntimeProfile: deps.managedRuntimeProfile,
       lifecycle: deps.protocolLifecycle,
       cwd: workingDirectory,
       env,
@@ -364,6 +366,17 @@ export const run = async (ctx: RunContext, deps: RunDependencies = {}): Promise<
     const extracted = extractDisallowedToolsArgs(ctx.argv);
     parsed = parseGlobalArgs(extracted.args);
     toolDisallowlist = extracted.toolDisallowlist;
+    if (parsed.values["managed-profile-stdin"] && !parsed.values.help && !parsed.values.version) {
+      const command = parsed.positionals[0];
+      if (command && command !== "app-server" && command !== "agent-server") throw new Error("Managed profile only supports task execution");
+      const input = deps.protocolInput ?? ctx.stdin;
+      deps = { ...deps, managedRuntimeProfile: await readManagedRuntimeProfile(input), skipUserConfig: true };
+      if (parsed.values["prompt-stdin"]) {
+        if (parsed.values.prompt || command) throw new Error("--prompt-stdin conflicts with prompt or protocol server");
+        parsed.values.prompt = await readManagedPrompt(input);
+      }
+      if (!parsed.values.prompt && !command) throw new Error("Managed headless execution requires a prompt");
+    } else if (parsed.values["prompt-stdin"]) throw new Error("--prompt-stdin requires --managed-profile-stdin");
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     ctx.stderr.write(`${message}\n\n`);
@@ -556,6 +569,7 @@ export const run = async (ctx: RunContext, deps: RunDependencies = {}): Promise<
       deps.logger ??
       createNodeLoggerFactory({ env }).createLogger("zcode").child({ module: "cli" }),
     loadDotenv: (dotenvOptions = {}) => {
+      if (deps.managedRuntimeProfile) return { keys: [], loaded: false };
       const dotenvResult = (deps.loadDotenv ?? loadCliDotenv)(dotenvOptions);
       applyCliRuntimeEnvSanitization(dotenvOptions.env ?? env);
       return dotenvResult;

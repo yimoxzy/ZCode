@@ -13,8 +13,10 @@ import {
   createManagedProviderConfigRuntime,
   type ProviderConfigRuntimeBoundary,
 } from "../zhiliu/managedProviderConfigRuntime.js";
+import type { ZhiliuManagedRuntimeAuthority } from "../zhiliu-runtime/contract.js";
 
 export interface ProviderConfigRuntimeOptions {
+  readonly managedRuntimeAuthority?: ZhiliuManagedRuntimeAuthority;
   readonly zcodeBuiltinFilePath: string;
   readonly zcodeBuiltinActiveFilePath?: string;
   readonly zcodeBuiltinRemote?: NodeProviderConfigRuntimeOptions["zcodeBuiltinRemote"];
@@ -38,7 +40,7 @@ export class ProviderConfigRuntime {
 
   constructor(options: ProviderConfigRuntimeOptions) {
     if (ZHILIU_DESKTOP_ENABLED) {
-      this.#runtime = createManagedProviderConfigRuntime();
+      this.#runtime = createManagedProviderConfigRuntime(options.managedRuntimeAuthority);
       this.configService = this.#runtime.configService;
       return;
     }

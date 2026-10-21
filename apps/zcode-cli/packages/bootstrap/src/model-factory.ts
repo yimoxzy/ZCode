@@ -7,8 +7,10 @@ import {
   type EnvRecord,
 } from "@zcode/adapters/model";
 import type { Logger, ModelStatusSink } from "@zcode/contracts";
+import type { ZhiliuManagedRuntimeProfile } from "@zcode/shared";
 
 interface CreateModelAdapterBaseOptions {
+  managedRuntimeProfile?: ZhiliuManagedRuntimeProfile;
   env?: EnvRecord;
   logger?: Logger;
   modelIoDir?: string;
@@ -30,11 +32,16 @@ export function createModelAdapter(options: CreateModelAdapterOptions): AiSdkMod
   }
   return new AiSdkModelAdapter({
     ...options.executionConfig,
-    requestSecurityState: processRequestSecurityState,
-    debugDir: options.modelIoDir,
-    env: options.env,
+    ...(options.managedRuntimeProfile ? {
+      endpointRoutingPort: undefined, network: undefined, singleAttempt: true,
+      retry: { maxAttempts: 1 },
+    } : {}),
+    requestSecurityState: options.managedRuntimeProfile
+      ? createModelRequestSecurityState(options.managedRuntimeProfile) : processRequestSecurityState,
+    debugDir: options.managedRuntimeProfile ? undefined : options.modelIoDir,
+    env: options.managedRuntimeProfile ? {} : options.env,
     logger: options.logger,
-    modelIoFullRetentionEnabled: options.modelIoFullRetentionEnabled,
+    modelIoFullRetentionEnabled: options.managedRuntimeProfile ? false : options.modelIoFullRetentionEnabled,
     streamIdleTimeoutMs: options.streamIdleTimeoutMs,
     statusSink: options.statusSink,
   });

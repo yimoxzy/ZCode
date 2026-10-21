@@ -158,7 +158,9 @@ export async function runZCodeProtocolAgent(
     providerRegistryRuntime = await acquireProtocolStartupResource({
       signal: options.lifecycle?.signal,
       logger,
-      create: () => startProcessProviderRegistryRuntime(runtimeEnv),
+      create: () => startProcessProviderRegistryRuntime(runtimeEnv, {
+        managedRuntimeProfile: options.managedRuntimeProfile,
+      }),
       disposeLate: (runtime) => runtime.dispose(),
     });
     options.lifecycle?.signal.throwIfAborted();
@@ -174,7 +176,7 @@ export async function runZCodeProtocolAgent(
       signal: options.lifecycle?.signal,
       logger,
       disposeLate: () => shutdownZCodeTelemetry(),
-      create: () =>
+      create: () => options.managedRuntimeProfile ? Promise.resolve(runtimeEnv) :
         prepareZCodeTelemetryEnv(runtimeEnv, {
           cliVersion: options.version,
           productVersion: options.env?.ZCODE_APP_VERSION,
@@ -281,6 +283,7 @@ export async function runZCodeProtocolAgent(
             activeProviderRegistryRuntime.runtime.registryService,
             activeProviderRegistryRuntime.configuredDefaultModelSelection,
           ),
+          managedRuntimeProfile: options.managedRuntimeProfile,
           // 只读同进程已应用快照；不为子任务另发 Host RPC，也不在 ModelFactory 偷换模型。
           resolveEffectiveModelSelection: (selection) => {
             const view = modelSelectionFacade.getView(undefined, undefined, { selection });

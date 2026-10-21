@@ -132,6 +132,8 @@ export interface AgentRuntimeConfig {
   mode?: CollaborationMode;
   planEnabled?: boolean;
   modelStreaming?: "off" | "on";
+  /** False when a metered gateway owns retries and partial requests must not be replayed. */
+  modelStreamRecoveryEnabled?: boolean;
   streamingToolExecution?: "off" | "readOnly";
   /** Session 创建时固定；缺省使用共享的模型上下文预算默认策略。 */
   modelContextBudgetStrategy?: "legacy" | "preflight-v1";

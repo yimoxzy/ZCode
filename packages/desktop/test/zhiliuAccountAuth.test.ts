@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
+import { createHash } from "node:crypto";
+import { exampleRuntimeGrant } from "../../services/src/zhiliu-runtime/contract.example.js";
 import { createZhiliuAccountAuth } from "../src/main/zhiliuAccountAuth.js";
 import {
   createZhiliuAccountDeviceIdentity,
@@ -85,6 +87,7 @@ function fixture(restored = false) {
     }),
   };
   const options = {
+    onRuntimeSelectionChanged: vi.fn(async (_identity: string) => undefined),
     cloudUrl: () => origin,
     http,
     store,
@@ -117,6 +120,157 @@ function fixture(restored = false) {
 }
 
 describe("织流 Main 浏览器账号所有者", () => {
+  const agentId = authorizationId,
+    tierId = "00000000-0000-4000-8000-000000000005";
+  function runtimeFixture() {
+    const h = fixture(true),
+      original = h.http.getMockImplementation()!;
+    const bodies: Array<Record<string, unknown>> = [];
+    h.http.mockImplementation(async (url, init) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith("/runtime-catalog"))
+        return h.response({
+          protocol_version: 1,
+          agents: [
+            { id: agentId, name: "PPT助手", description: "公司知识编排", version_id: agentId },
+          ],
+          inference_profiles: [{ id: tierId, name: "深入思考", description: "平台定价档位" }],
+        });
+      if (path.endsWith("/runtime-grants")) {
+        bodies.push(JSON.parse(String(init?.body)));
+        return h.response({
+          ...exampleRuntimeGrant,
+          expires_at: new Date(Date.now() + 600000).toISOString(),
+        });
+      }
+      if (path.includes("/runtime-grants/") && init?.method === "DELETE") return h.response(null);
+      return original(url, init);
+    });
+    return { ...h, bodies };
+  }
+  it("平台Agent/档位选择按workspaceIdentity隔离，只把UUID给发行接口，退出清空", async () => {
+    const h = runtimeFixture();
+    const one = { workspacePath: "C:/one", workspaceIdentity: "tenant-one" },
+      two = { ...one, workspaceIdentity: "tenant-two" };
+    const selection = { agent_id: agentId, inference_profile_id: tierId };
+    const identity = (key: string) => `local:${createHash("sha256").update(key).digest("hex")}`;
+    expect((await h.auth.getRuntimeSelection(one)).selection).toEqual({
+      agent_id: null,
+      inference_profile_id: null,
+    });
+    await h.auth.setRuntimeSelection({ ...one, selection });
+    expect(h.options.onRuntimeSelectionChanged).toHaveBeenCalledWith(identity("tenant-one"));
+    expect(
+      (await h.auth.getRuntimeSelection({ ...one, workspacePath: "C:/changed-path" })).selection,
+    ).toEqual(selection);
+    expect((await h.auth.getRuntimeSelection(two)).selection.agent_id).toBeNull();
+    await h.auth.authorizeRuntime(identity("tenant-one"));
+    expect(h.bodies[0]).toEqual({
+      workspace_identity: identity("tenant-one"),
+      ...selection,
+      platform_memory_write_capability: "forced_approval_and_execution_identity_v1",
+    });
+    await expect(
+      h.auth.setRuntimeSelection({ ...one, selection: { ...selection, agent_id: tierId } }),
+    ).rejects.toThrow("Agent暂不可用");
+    await h.auth.logout();
+    await h.auth.login();
+    expect((await h.auth.getRuntimeSelection(one)).selection.agent_id).toBeNull();
+    expect(JSON.stringify(await h.auth.getRuntimeSelection(one))).not.toMatch(
+      /dl_|rg_|model|gateway/,
+    );
+  });
+  it("选择切换等待当前工作区清理，新grant不能绕过屏障，其他工作区不受阻", async () => {
+    const h = runtimeFixture(),
+      held = deferred<void>();
+    h.options.onRuntimeSelectionChanged.mockImplementationOnce(() => held.promise);
+    const target = { workspacePath: "C:/project", workspaceIdentity: "one" };
+    const identity = `local:${createHash("sha256").update("one").digest("hex")}`;
+    const changing = h.auth.setRuntimeSelection({
+      ...target,
+      selection: { agent_id: agentId, inference_profile_id: tierId },
+    });
+    await vi.waitFor(() => expect(h.options.onRuntimeSelectionChanged).toHaveBeenCalledOnce());
+    const waiting = h.auth.authorizeRuntime(identity);
+    await h.auth.authorizeRuntime(`local:${"b".repeat(64)}`);
+    expect(h.bodies).toHaveLength(1);
+    held.resolve();
+    await changing;
+    await waiting;
+    expect(h.bodies[1]).toMatchObject({ agent_id: agentId, inference_profile_id: tierId });
+  });
+  it("清理失败后拒绝继续发grant，显式重试成功才恢复", async () => {
+    const h = runtimeFixture();
+    const input = {
+      workspacePath: "C:/project",
+      selection: { agent_id: agentId, inference_profile_id: null },
+    };
+    h.options.onRuntimeSelectionChanged.mockRejectedValueOnce(new Error("cleanup_failed"));
+    await expect(h.auth.setRuntimeSelection(input)).rejects.toThrow("cleanup_failed");
+    const identity = `local:${createHash("sha256").update(input.workspacePath).digest("hex")}`;
+    await expect(h.auth.authorizeRuntime(identity)).rejects.toThrow("cleanup_failed");
+    expect(h.bodies).toHaveLength(0);
+    await h.auth.setRuntimeSelection(input);
+    await h.auth.authorizeRuntime(identity);
+    expect(h.bodies[0]?.agent_id).toBe(agentId);
+  });
+  it("旧选择发行中的迟到grant必须撤销，不能交给Host继续", async () => {
+    const h = runtimeFixture(),
+      original = h.http.getMockImplementation()!,
+      held = deferred<Response>();
+    h.http.mockImplementation((url, init) =>
+      String(url).endsWith("/runtime-grants") ? held.promise : original(url, init),
+    );
+    const target = { workspacePath: "C:/project" },
+      identity = `local:${createHash("sha256").update(target.workspacePath).digest("hex")}`;
+    const pending = h.auth.authorizeRuntime(identity);
+    await vi.waitFor(() =>
+      expect(h.http.mock.calls.some(([url]) => String(url).endsWith("/runtime-grants"))).toBe(true),
+    );
+    await h.auth.setRuntimeSelection({
+      ...target,
+      selection: { agent_id: agentId, inference_profile_id: tierId },
+    });
+    const rejected = expect(pending).rejects.toThrow("授权已失效");
+    held.resolve(
+      h.response({
+        ...exampleRuntimeGrant,
+        expires_at: new Date(Date.now() + 600000).toISOString(),
+      }),
+    );
+    await rejected;
+    expect(
+      h.http.mock.calls.some(
+        ([url, init]) =>
+          String(url).endsWith(`/runtime-grants/${exampleRuntimeGrant.grant_id}`) &&
+          init?.method === "DELETE",
+      ),
+    ).toBe(true);
+  });
+  it("relay短期授权single-flight，不投影到UI，退出后不再可用", async () => {
+    const h = fixture(true),
+      original = h.http.getMockImplementation()!;
+    let issues = 0;
+    h.http.mockImplementation(async (url, init) => {
+      if (String(url).endsWith("/relay-grants")) {
+        issues++;
+        return h.response({
+          protocol_version: 1,
+          relay_grant: "rc_test_non_secret_01234567890123456789",
+          expires_at: new Date(Date.now() + 300000).toISOString(),
+          principal_id: `${h.record.credential.user_id}:${h.record.credential.space_id}`,
+          desktop_device_id: h.record.credential.device_id,
+        });
+      }
+      return original(url, init);
+    });
+    const [one, two] = await Promise.all([h.auth.authorizeRelay(), h.auth.authorizeRelay()]);
+    expect(one).toBe(two);
+    expect(issues).toBe(1);
+    expect(JSON.stringify(h.auth.status())).not.toContain("rc_");
+    await h.auth.logout();
+    expect(await h.auth.authorizeRelay()).toBeUndefined();
+  });
   it("logs in through the system browser without starting a directory connection or exposing secrets to UI", async () => {
     const h = fixture();
     const result = await h.auth.login();

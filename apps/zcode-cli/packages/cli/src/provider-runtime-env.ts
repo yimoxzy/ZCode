@@ -53,6 +53,7 @@ interface PrepareCliProviderRuntimeEnvOptions {
 export async function prepareCliProviderRuntimeEnv(
   options: PrepareCliProviderRuntimeEnvOptions,
 ): Promise<Record<string, string>> {
+  if (options.argv.includes("--managed-profile-stdin")) return {};
   if (!requiresProviderRuntime(options.argv)) return {};
 
   const explicitZCodeBuiltin = options.env[ZCODE_BUILTIN_PROVIDER_CONFIG_FILE_ENV]?.trim();

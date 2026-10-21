@@ -1,6 +1,12 @@
 // @vitest-environment jsdom
 import { createElement } from "react";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const state = vi.hoisted(() => ({
@@ -22,14 +28,18 @@ vi.mock("@/hooks/useServices.js", () => ({
   useOptionalServices: state.forbiddenHook,
 }));
 vi.mock("@/hooks/useOAuth.js", () => ({ useOAuth: state.forbiddenHook }));
-vi.mock("@/hooks/useModelProviders.js", () => ({ useModelProviders: state.forbiddenHook }));
+vi.mock("@/hooks/useModelProviders.js", () => ({
+  useModelProviders: state.forbiddenHook,
+}));
 vi.mock("@/i18n/IntlProvider.js", () => ({
   useZCodeIntl: () => ({
     locale: "zh-CN",
     intl: { formatMessage: ({ id }: { id: string }) => id },
   }),
 }));
-vi.mock("@/logger.js", () => ({ logger: { warn: vi.fn(), error: vi.fn(), info: vi.fn() } }));
+vi.mock("@/logger.js", () => ({
+  logger: { warn: vi.fn(), error: vi.fn(), info: vi.fn() },
+}));
 
 import { DesktopCommandIds } from "@zcode/shared";
 import { ModelConfigSelect } from "@/ModelConfigSelect.js";
@@ -38,11 +48,17 @@ import { ComposerProviderMenu } from "@/chat-input-toolbar/ComposerProviderMenu.
 import { WindowsTopLeftLogo } from "@/WindowsTopLeftLogo.js";
 import { ZCodeAppLogo } from "@/components/mobile-ui/ZCodeAppLogo.js";
 import { ModelProviderSection } from "@/settings/ModelProviderSection.js";
-import { ConversationComposer, type ConversationComposerProps } from "@/v4/ConversationComposer.js";
+import {
+  ConversationComposer,
+  type ConversationComposerProps,
+} from "@/v4/ConversationComposer.js";
 import { LoginPanel } from "@/WelcomeScreen.js";
 import { OccupationOnboarding } from "@/onboarding/OccupationOnboarding.js";
 import { OnboardingDialog } from "@/onboarding/OnboardingDialog.js";
-import { isSettingsSectionEnabled, resolveSettingsSection } from "@/lib/settingsNavigation.js";
+import {
+  isSettingsSectionEnabled,
+  resolveSettingsSection,
+} from "@/lib/settingsNavigation.js";
 import { createSettingsPageConfig } from "@/settings/settingsPageConfig.js";
 
 beforeEach(() => {
@@ -57,7 +73,9 @@ describe("织流仅平台授权的 UI 边界", () => {
     expect(isSettingsSectionEnabled("migration")).toBe(false);
     expect(resolveSettingsSection("modelProvider")).toBe("general");
     const { settingsSections } = createSettingsPageConfig({ isDesktop: true });
-    expect(settingsSections.some((item) => item.id === "modelProvider")).toBe(false);
+    expect(settingsSections.some((item) => item.id === "modelProvider")).toBe(
+      false,
+    );
     expect(settingsSections.some((item) => item.id === "skill")).toBe(true);
     expect(settingsSections.some((item) => item.id === "mcp")).toBe(true);
   });
@@ -72,18 +90,25 @@ describe("织流仅平台授权的 UI 边界", () => {
     expect(state.forbiddenHook).not.toHaveBeenCalled();
   });
 
-  it("聊天不挂载本地输入/附件预热 hook，云入口只提交固定平台命令", async () => {
+  it("未登录时不挂载本地输入/附件预热 hook，云入口只提交固定平台命令", async () => {
     const onSendText = vi.fn();
     render(
-      createElement(ConversationComposer, { onSendText } as unknown as ConversationComposerProps),
+      createElement(ConversationComposer, {
+        onSendText,
+      } as unknown as ConversationComposerProps),
     );
     expect(screen.queryByRole("textbox")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "登录云 Agent" }));
     await waitFor(() =>
-      expect(state.executeDesktopCommand).toHaveBeenCalledExactlyOnceWith(
+      expect(state.executeDesktopCommand).toHaveBeenCalledWith(
         DesktopCommandIds.OpenZhiliuCloud,
       ),
     );
+    expect(
+      state.executeDesktopCommand.mock.calls.filter(
+        ([command]) => command === DesktopCommandIds.OpenZhiliuCloud,
+      ),
+    ).toHaveLength(1);
     expect(onSendText).not.toHaveBeenCalled();
     expect(state.forbiddenHook).not.toHaveBeenCalled();
   });
@@ -169,11 +194,15 @@ describe("织流仅平台授权的 UI 边界", () => {
   it("新标题栏与移动端应用图标使用织流品牌", () => {
     const view = render(createElement(WindowsTopLeftLogo));
     expect(
-      view.container.querySelector('[data-testid="settings-logo"]')?.getAttribute("aria-label"),
+      view.container
+        .querySelector('[data-testid="settings-logo"]')
+        ?.getAttribute("aria-label"),
     ).toBe("织流");
     expect(view.container.querySelector("img")?.className).toContain("size-5");
     expect(view.container.innerHTML).not.toContain("ZCode");
     view.rerender(createElement(ZCodeAppLogo, {}));
-    expect(view.container.querySelector("img")?.getAttribute("data-app-logo")).toBe("zhiliu");
+    expect(
+      view.container.querySelector("img")?.getAttribute("data-app-logo"),
+    ).toBe("zhiliu");
   });
 });

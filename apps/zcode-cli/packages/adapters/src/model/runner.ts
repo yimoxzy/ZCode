@@ -6,6 +6,7 @@ import type { ModelRequestSecurityState } from "./request-security.js";
 import {
   ModelErrorCode,
   ModelProtocolError,
+  ModelRetryBudget,
   getCurrentModelInvocationContext,
 } from "@zcode/contracts";
 import type {
@@ -59,6 +60,8 @@ export type {
 export { normalizeUsage, toModelStreamEvent } from "./runner-normalization.js";
 
 export interface AiSdkModelAdapterOptions {
+  /** 可信托管执行禁止客户端在不确定失败后重放模型请求。 */
+  singleAttempt?: boolean;
   defaultHeaders?: AiSdkModelExecutionConfig["defaultHeaders"];
   requestSecurityState?: ModelRequestSecurityState;
   endpointRoutingPort?: import("@zcode/contracts").ProviderEndpointRoutingPort;
@@ -84,6 +87,7 @@ export interface CreateAiSdkModelOptions {
 }
 
 export class AiSdkModelAdapter {
+  private readonly singleAttempt: boolean;
   private readonly execution: AiSdkModelExecution;
   private readonly runtime: AiSdkModelRuntime;
   private readonly env: EnvRecord;
@@ -95,6 +99,7 @@ export class AiSdkModelAdapter {
   private modelIoFullRetentionEnabled: boolean;
 
   constructor(options: AiSdkModelAdapterOptions) {
+    this.singleAttempt = options.singleAttempt === true;
     this.execution = new AiSdkModelExecution(
       {
         defaultHeaders: options.defaultHeaders,
@@ -223,6 +228,7 @@ export class AiSdkModelAdapter {
         abortSignal: request.abortSignal,
         maxOutputTokens: request.options.maxOutputTokens,
         ...invocationContext,
+        ...(this.singleAttempt ? { modelRetryBudget: ModelRetryBudget.SingleAttempt } : {}),
         ...(shouldAttachReasoningTelemetry
           ? {
               modelCall: {

@@ -698,6 +698,10 @@ interface ManagedCuaHelperHostDispose {
 // 的 WeakMap 侧表登记，dispose 时统一终止（best-effort，不阻断其它资源回收）。
 const managedCuaHelperHosts = new WeakMap<ServiceCollection, ManagedCuaHelperHostDispose>();
 const providerRuntimes = new WeakMap<ServiceCollection, ProviderRuntime>();
+const managedRuntimeInvalidators = new WeakMap<
+  ServiceCollection,
+  (target?: { workspacePath: string; workspaceIdentity?: string }) => Promise<void>
+>();
 const providerProvisioningSources = new WeakMap<ServiceCollection, ProviderProvisioningSource>();
 const providerProvisioningTriggerDisposers = new WeakMap<
   ServiceCollection,
@@ -1231,6 +1235,8 @@ export function createLocalServices(options: {
   // 注入点：默认 resolver 已能覆盖 dev/桌面/SSH 远端三类形态；
   // 测试或特殊宿主想强制走自定义 binary/参数时从这里注入。
   zcodeAgentCommandResolver?: ZCodeAgentCommandResolver;
+  /** 可信桌面Host拥有的模型broker；不经Renderer service RPC注入。 */
+  managedRuntimeAuthority?: import("./zhiliu-runtime/contract.js").ZhiliuManagedRuntimeAuthority;
   /** Desktop Main 提前异步采集的本机 runtime 环境；Local Host 注入后不再同步启动 login shell。 */
   runtimeProcessEnvPatch?: Record<string, string>;
   /** 本地桌面上次 workspace 缺失时，仅用于 Agent 子进程 spawn.cwd 兜底。 */
@@ -1508,6 +1514,7 @@ export function createLocalServices(options: {
   const providerConfigLog = createServiceLogger("provider-config");
   const clientConfigPlatform = resolveClientConfigPlatform();
   const providerConfigRuntime = createProviderConfigRuntime({
+    managedRuntimeAuthority: options.managedRuntimeAuthority,
     zcodeBuiltinFilePath: options.zcodeBuiltinProviderConfigFilePath,
     zcodeBuiltinEnvironment: {
       environmentConfigRoot: resolveAppConfigDir(),
@@ -1615,7 +1622,21 @@ export function createLocalServices(options: {
   const providerRuntime = createProviderRuntimeFromConfigRuntime({
     configRuntime: providerConfigRuntime,
     accountSource: accountProviderConfigSource,
-    modelSelectionConfiguredDefaultSource,
+    modelSelectionConfiguredDefaultSource: options.managedRuntimeAuthority
+      ? {
+          read: async () => {
+            const profile = options.managedRuntimeAuthority?.readProfile();
+            return profile
+              ? {
+                  providerId: "zhiliu-managed",
+                  modelId: "zhiliu-managed",
+                  options: { reasoningLevel: profile.reasoningEffort ?? "managed" },
+                }
+              : undefined;
+          },
+          onDidChange: options.managedRuntimeAuthority.onDidChange,
+        }
+      : modelSelectionConfiguredDefaultSource,
     disposeModelSelectionConfiguredDefaultSource: () =>
       modelSelectionConfiguredDefaultSource.dispose(),
     testConnectivity: createProviderSettingsConnectivityTester({
@@ -2219,6 +2240,18 @@ export function createLocalServices(options: {
     workspaceIdentity: undefined,
   });
   const zcodeAgentService = createZCodeAgentService({
+    ...(options.managedRuntimeAuthority
+      ? {
+          resolveManagedRuntimeProfile: async (
+            target: import("./zhiliu-runtime/contract.js").ManagedRuntimeTarget,
+          ) => {
+            const profile = await options.managedRuntimeAuthority!.resolve(target);
+            await providerRuntime.start();
+            await providerRuntime.registryService.refresh("managed-runtime-profile");
+            return profile;
+          },
+        }
+      : {}),
     prepareProjectExecution,
     prepareSessionCreation: async (target) =>
       (await taskIndexRepo.getProjectRepository()).reserveCreatedTask({
@@ -2229,7 +2262,7 @@ export function createLocalServices(options: {
     resolveSessionDirectories: async (target) =>
       (await projectService.resolveSessionDirectories({ ...target, taskId: target.sessionId }))
         .additionalDirectories,
-    ...(agentAccountProviderConfigSource
+    ...(agentAccountProviderConfigSource && !options.managedRuntimeAuthority
       ? { accountProviderConfigSource: agentAccountProviderConfigSource }
       : {}),
     accountRequestAuthService,
@@ -2401,12 +2434,14 @@ export function createLocalServices(options: {
           telemetryEnv,
           userId: telemetryProfile?.id,
         }),
-        ...createNodeProviderRuntimePathEnv({
-          // Built-in Active 路径按当前 Endpoint 隔离，不能通过同步的固定路径
-          // getter 读取；Agent spawn 必须等待本轮 Endpoint Source 完成解析和物化。
-          zcodeBuiltinFilePath: await providerConfigRuntime.resolveZCodeBuiltinActiveFilePath(),
-          personalFilePath: join(resolveAppConfigDir(), PERSONAL_PROVIDER_CONFIG_FILE_NAME),
-        }),
+        ...(!options.managedRuntimeAuthority
+          ? createNodeProviderRuntimePathEnv({
+              // Built-in Active 路径按当前 Endpoint 隔离，不能通过同步的固定路径
+              // getter 读取；Agent spawn 必须等待本轮 Endpoint Source 完成解析和物化。
+              zcodeBuiltinFilePath: await providerConfigRuntime.resolveZCodeBuiltinActiveFilePath(),
+              personalFilePath: join(resolveAppConfigDir(), PERSONAL_PROVIDER_CONFIG_FILE_NAME),
+            })
+          : {}),
       };
     },
     ...(!isDesktopAttachedRemote
@@ -2968,6 +3003,9 @@ export function createLocalServices(options: {
   offPeakRequestAuthBuilders.set(services, buildOffPeakRequestAuthForTicket);
 
   providerRuntimes.set(services, providerRuntime);
+  managedRuntimeInvalidators.set(services, (target) =>
+    zcodeAgentService.invalidateManagedRuntime(target),
+  );
   providerProvisioningSources.set(services, providerProvisioningSource);
   providerProvisioningTriggerDisposers.set(services, providerProvisioningDisposers);
   // desktop-attached-remote 的组织态在远端 Host 库里，由远端自己的扫描器归档；本机不扫。
@@ -3098,6 +3136,14 @@ function readTelemetryOAuthUserId(rawUserInfo: string | null): string {
   } catch {
     return "";
   }
+}
+
+/** Main退出屏障通过Host直接调用，不暴露Renderer模型配置或凭据。 */
+export async function invalidateManagedAgentRuntimes(
+  services: ServiceCollection,
+  target?: { workspacePath: string; workspaceIdentity?: string },
+): Promise<void> {
+  await managedRuntimeInvalidators.get(services)?.(target);
 }
 
 export function disposeServiceResources(services: ServiceCollection): void {

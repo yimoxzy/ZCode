@@ -14,16 +14,20 @@ export function resolveStartupPlugins(input: {
   configResult: ConfigResult;
   env?: NodeJS.ProcessEnv;
   logger?: Logger;
-  options: Pick<ZCodeAppOptions, "officialPluginRoots" | "pluginStorageRoot" | "includeVisualize">;
+  options: Pick<ZCodeAppOptions, "officialPluginRoots" | "pluginStorageRoot" | "includeVisualize" | "managedRuntimeProfile">;
   startupTimer: StartupTimer;
   workingDirectory: string;
 }): PluginLoadOutcome {
   const pluginStorageRoot =
     input.options.pluginStorageRoot ?? getPluginStorageRoot(input.cliStorageRoot);
   const pluginOutcome = discoverNodePluginsSync({
-    config: input.configResult.config.plugins,
+    explicitPluginRootsOnly: input.options.managedRuntimeProfile?.pluginManifest !== undefined,
+    config: input.options.managedRuntimeProfile?.pluginManifest ? {
+      ...input.configResult.config.plugins, enabled: true,
+      dirs: input.options.managedRuntimeProfile.pluginManifest.roots,
+    } : input.configResult.config.plugins,
     env: input.env ?? process.env,
-    officialPluginRoots: resolveOfficialPluginRoots({
+    officialPluginRoots: input.options.managedRuntimeProfile?.pluginManifest ? [] : resolveOfficialPluginRoots({
       extraRoots: input.options.officialPluginRoots,
       logger: input.logger,
       storageRoot: pluginStorageRoot,

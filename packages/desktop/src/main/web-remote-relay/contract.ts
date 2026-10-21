@@ -13,6 +13,8 @@ export interface WebRemoteControlDeviceStorage {
 export interface WebRemoteControlLogin {
   userId: string;
   jwt: string;
+  /** 织流账号绑定的native设备ID；上游未注入时继续使用原deviceMid。 */
+  deviceMid?: string;
 }
 
 export type WebRemoteControlDeviceTransportState =

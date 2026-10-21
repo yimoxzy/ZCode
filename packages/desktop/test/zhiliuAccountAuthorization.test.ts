@@ -10,10 +10,13 @@ import {
 import * as fs from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { exampleRuntimeGrant } from "../../services/src/zhiliu-runtime/contract.example.js";
 import {
   beginZhiliuAccountAuthorization,
   createZhiliuAccountBootstrap,
+  createZhiliuRelayGrant,
   createZhiliuAccountDeviceIdentity,
+  createZhiliuRuntimeGrant,
   fetchZhiliuAccountSession,
   revokeZhiliuAccount,
   ZhiliuAccountSecureStore,
@@ -61,6 +64,86 @@ const record = (): StoredZhiliuAccount => ({
 });
 
 describe("织流浏览器账号授权证明", () => {
+  it.each([
+    undefined,
+    {
+      agent_id: authorizationId,
+      inference_profile_id: "00000000-0000-4000-8000-000000000005",
+    },
+  ])("仅 Main 在默认或所选 Agent 授权中固定声明已验证的记忆审批能力：%j", async (selection) => {
+    const saved = record(),
+      now = Date.now(),
+      workspaceIdentity = `local:${"a".repeat(64)}`;
+    const grant = {
+      ...exampleRuntimeGrant,
+      expires_at: new Date(now + 600000).toISOString(),
+      profile: { ...exampleRuntimeGrant.profile, platform_tools_write_enabled: false },
+    };
+    const http = vi.fn<typeof fetch>().mockResolvedValue(response(grant));
+    await expect(
+      createZhiliuRuntimeGrant(saved, workspaceIdentity, http, () => now, selection),
+    ).resolves.toEqual({ origin, grant });
+    expect(http.mock.calls[0]![0]).toBe(`${origin}/api/desktop-auth/runtime-grants`);
+    expect(http.mock.calls[0]![1]).toMatchObject({
+      method: "POST",
+      redirect: "error",
+      cache: "no-store",
+      headers: { Authorization: `Bearer ${saved.credential.login_token}` },
+    });
+    expect(JSON.parse(http.mock.calls[0]![1]!.body as string)).toEqual({
+      workspace_identity: workspaceIdentity,
+      ...selection,
+      platform_memory_write_capability: "forced_approval_and_execution_identity_v1",
+    });
+  });
+  it("拒绝从 Agent 选择注入或覆盖记忆能力声明，且不发出授权请求", async () => {
+    const http = vi.fn<typeof fetch>();
+    const selection = {
+      agent_id: null,
+      inference_profile_id: null,
+      platform_memory_write_capability: "forged_version",
+    };
+    await expect(
+      createZhiliuRuntimeGrant(record(), `local:${"a".repeat(64)}`, http, Date.now, selection),
+    ).rejects.toThrow();
+    expect(http).not.toHaveBeenCalled();
+  });
+  it("relay只在Main以dl_换同user+space+native设备的短期rc_，拒绝身份或期限越界", async () => {
+    const saved = record(),
+      now = Date.now();
+    const grant = {
+      protocol_version: 1,
+      relay_grant: "rc_example_non_secret_01234567890123456789",
+      principal_id: `${saved.credential.user_id}:${saved.credential.space_id}`,
+      desktop_device_id: saved.credential.device_id,
+      expires_at: new Date(now + 300000).toISOString(),
+    };
+    const http = vi.fn<typeof fetch>().mockResolvedValue(response(grant));
+    expect(
+      await createZhiliuRelayGrant(saved, saved.credential.device_id, http, () => now),
+    ).toEqual(grant);
+    expect(http.mock.calls[0]![0]).toBe(`${origin}/api/desktop-auth/relay-grants`);
+    expect(http.mock.calls[0]![1]).toMatchObject({
+      redirect: "error",
+      cache: "no-store",
+      headers: { Authorization: `Bearer ${saved.credential.login_token}` },
+      body: JSON.stringify({ device_mid: saved.credential.device_id }),
+    });
+    await expect(createZhiliuRelayGrant(saved, "wrong-device", http, () => now)).rejects.toThrow(
+      "电脑身份不匹配",
+    );
+    expect(http).toHaveBeenCalledTimes(1);
+    for (const invalid of [
+      { ...grant, principal_id: saved.credential.user_id },
+      { ...grant, desktop_device_id: authorizationId },
+      { ...grant, expires_at: new Date(now + 360001).toISOString() },
+    ]) {
+      http.mockResolvedValueOnce(response(invalid));
+      await expect(
+        createZhiliuRelayGrant(saved, saved.credential.device_id, http, () => now),
+      ).rejects.toThrow("远控授权身份或有效期无效");
+    }
+  });
   it("opens only the fixed platform route and proves possession of a fresh PKCE and Ed25519 key", async () => {
     const http = vi
       .fn<typeof fetch>()
@@ -156,14 +239,12 @@ describe("织流浏览器账号授权证明", () => {
   });
   it("rejects expired/overlong bootstrap tickets and unexpected grant failures", async () => {
     const saved = record();
-    const http = vi
-      .fn<typeof fetch>()
-      .mockResolvedValue(
-        response({
-          ticket: "bootstrap-test-ticket-only-123456",
-          expires_at: new Date(Date.now() + 120000).toISOString(),
-        }),
-      );
+    const http = vi.fn<typeof fetch>().mockResolvedValue(
+      response({
+        ticket: "bootstrap-test-ticket-only-123456",
+        expires_at: new Date(Date.now() + 120000).toISOString(),
+      }),
+    );
     await expect(createZhiliuAccountBootstrap(saved, http)).rejects.toThrow();
     http.mockResolvedValueOnce(response({ detail: "authorization_expired" }, 410));
     await expect(revokeZhiliuAccount(saved, http)).resolves.toBeUndefined();

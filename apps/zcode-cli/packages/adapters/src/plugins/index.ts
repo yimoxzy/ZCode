@@ -1,5 +1,5 @@
-import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import type {
   CustomCommandRoot,
   HookConfig,
@@ -18,17 +18,11 @@ import type {
   PluginPort,
   SkillRoot,
 } from "@zcode/contracts";
-import {
-  HookEventName as HookEventNameValue,
-  HookMatcherConfigSchema,
-  ZCODE_INLINE_PLUGIN_MARKETPLACE,
-  ZCODE_OFFICIAL_PLUGIN_MARKETPLACE,
-} from "@zcode/contracts";
+import { HookEventName as HookEventNameValue, HookMatcherConfigSchema } from "@zcode/contracts";
 import {
   directoryExists,
   fileExists,
   isMissingPath,
-  isNotFoundError,
   isRecord,
   parsePathList,
   resolveInside,
@@ -40,12 +34,8 @@ import { loadPluginMcpServerDefinitions, resolvePluginMcpServers } from "./mcp.j
 import { parsePluginUiSurfaces } from "./ui-surfaces.js";
 import { listPluginHookSources } from "./hook-sources.js";
 import { enumeratePluginComponents } from "./plugin-components.js";
-import {
-  listInstalledPluginRecords,
-  normalizeAuthorValue,
-  resolveInstalledPluginRoot,
-} from "./marketplace.js";
-import { loadBundledOfficialPluginRootsSync } from "./official-marketplace.js";
+import { normalizeAuthorValue } from "./marketplace.js";
+import { resolveNodePluginCandidates } from "./discovery/index.js";
 import type {
   LoadedPlugin,
   PluginAbortOptions,
@@ -139,7 +129,7 @@ export class NodePluginAdapter implements PluginPort {
 
     const diagnostics: PluginDiagnostic[] = [];
     const dataRoot = join(request.storageRoot || this.options.storageRoot, "data");
-    const candidates = this.resolveCandidates(request, diagnostics, options);
+    const candidates = resolveNodePluginCandidates(request, diagnostics, options);
     const commandRoots: CustomCommandRoot[] = [];
     const hooks: PluginLoadOutcome["hooks"] = {};
     const mcpServers: PluginLoadOutcome["mcpServers"] = {};
@@ -233,47 +223,6 @@ export class NodePluginAdapter implements PluginPort {
       plugins,
       skillRoots,
     };
-  }
-
-  private resolveCandidates(
-    request: Pick<PluginDiscoverRequest, "config" | "officialPluginRoots" | "storageRoot">,
-    diagnostics: PluginDiagnostic[],
-    options?: PluginAbortOptions,
-  ): PluginCandidate[] {
-    const candidates: PluginCandidate[] = [];
-    for (const rootPath of request.config.dirs) {
-      candidates.push({
-        defaultEnabled: true,
-        marketplace: ZCODE_INLINE_PLUGIN_MARKETPLACE,
-        rootPath: resolve(rootPath),
-        source: "inline",
-      });
-    }
-    for (const rootPath of request.officialPluginRoots ?? []) {
-      candidates.push({
-        defaultEnabled: false,
-        marketplace: ZCODE_OFFICIAL_PLUGIN_MARKETPLACE,
-        rootPath: resolve(rootPath),
-        source: "official",
-      });
-    }
-    candidates.push(
-      ...scanOfficialCache(request.storageRoot, diagnostics, options).map((rootPath) => ({
-        defaultEnabled: false,
-        marketplace: ZCODE_OFFICIAL_PLUGIN_MARKETPLACE,
-        rootPath,
-        source: "official" as const,
-      })),
-    );
-    for (const installed of listInstalledPluginRecords(request.storageRoot)) {
-      candidates.push({
-        defaultEnabled: false,
-        marketplace: installed.marketplace,
-        rootPath: resolveInstalledPluginRoot(request.storageRoot, installed),
-        source: "cache",
-      });
-    }
-    return candidates;
   }
 }
 
@@ -852,47 +801,6 @@ function stripMarkdownFrontmatter(markdown: string): string {
   if (lines[0]?.trim() !== "---") return markdown;
   const endIndex = lines.findIndex((line, index) => index > 0 && line.trim() === "---");
   return endIndex > 0 ? lines.slice(endIndex + 1).join("\n") : markdown;
-}
-
-function scanOfficialCache(
-  storageRoot: string,
-  diagnostics: PluginDiagnostic[],
-  options?: PluginAbortOptions,
-): string[] {
-  // 官方插件升级会保留旧版本缓存目录；若遍历全部目录再按插件 id
-  // “先到先得”，旧版本会抢在 bundled marketplace 指向的当前版本前被加载。
-  // bundled 分片是当前随应用发布资产的权威清单；存在时只加载其 cachePath。
-  // 不能简单选择最高 semver，否则官方回滚版本时仍会错误加载旧缓存。
-  const bundledRoots = loadBundledOfficialPluginRootsSync(storageRoot);
-  if (bundledRoots !== undefined) {
-    for (const rootPath of bundledRoots) {
-      throwIfAborted(options);
-    }
-    return bundledRoots;
-  }
-
-  const cacheRoot = join(storageRoot, "cache", ZCODE_OFFICIAL_PLUGIN_MARKETPLACE);
-  try {
-    const roots: string[] = [];
-    for (const pluginEntry of readdirSync(cacheRoot, { withFileTypes: true })) {
-      throwIfAborted(options);
-      if (!pluginEntry.isDirectory()) continue;
-      const pluginDir = join(cacheRoot, pluginEntry.name);
-      for (const versionEntry of readdirSync(pluginDir, { withFileTypes: true })) {
-        if (versionEntry.isDirectory()) roots.push(join(pluginDir, versionEntry.name));
-      }
-    }
-    return roots;
-  } catch (error) {
-    if (isNotFoundError(error)) return [];
-    diagnostics.push({
-      code: "plugin_root_not_found",
-      message: error instanceof Error ? error.message : `Failed to scan ${cacheRoot}`,
-      path: cacheRoot,
-      severity: "warning",
-    });
-    return [];
-  }
 }
 
 function loadPlugin(

@@ -960,6 +960,7 @@ export type HostResourceUsageSnapshotRequestMessage = z.infer<
 
 export const hostIncomingMessageSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("attach-zhiliu-tools-port") }).strict(),
+  z.object({ type: z.literal("attach-zhiliu-runtime-port") }).strict(),
   hostPrepareProjectWorkspaceMessageSchema,
   z.object({ type: z.literal("network-capture"), control: networkCaptureControlSchema }).strict(),
   z

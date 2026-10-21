@@ -105,6 +105,16 @@ export class PermissionService {
     rulePolicy?: ToolPermissionRulePolicy,
   ): PermissionDecisionResult {
     const capability = this.resolveCapability(context, toolCapability);
+    // Trusted Host authority is separate from availability and user-controlled allow rules.
+    if (this.config.approvalRequiredTools?.has(context.toolName)) {
+      return this.checkAlwaysAsk(
+        context,
+        { ...capability, alwaysAsk: true },
+        projectRules,
+        rulePolicy,
+        true,
+      );
+    }
     const planModeTransition = resolvePlanModeTransitionPermission(context);
 
     if (planModeTransition) {
@@ -370,6 +380,7 @@ export class PermissionService {
     capability: ResolvedPermissionCapability,
     projectRules?: PermissionRuleset | null,
     rulePolicy?: ToolPermissionRulePolicy,
+    singleUse = false,
   ): PermissionDecisionResult {
     if (context.mode === "auto") {
       return this.deny(
@@ -394,6 +405,21 @@ export class PermissionService {
         "rule.project.deny",
         `Tool ${context.toolName} is denied by project permission rules`,
       );
+    }
+    if (singleUse) {
+      if (context.planEnabled ?? context.mode === "plan") {
+        const planDecision = this.checkPlanMode(context, capability);
+        if (planDecision.decision === "deny") return planDecision;
+      }
+      return {
+        ...this.ask(
+          context,
+          capability,
+          "host.singleUseApproval",
+          `Tool ${context.toolName} requires approval for this execution`,
+        ),
+        approvalMode: "user-once",
+      };
     }
     // 会话免确认：阻断分支之后、ask 之前。命中即放行，不发 permission 事件、不弹窗；
     // 与 gate 本身一样不看模式（yolo / plan / build 一致）。
@@ -718,6 +744,8 @@ interface ResolvedPermissionCapability {
 // -----------------------------------------------
 
 export interface PermissionConfig {
+  /** Process-local Host authority, never populated from project/user permission files. */
+  approvalRequiredTools?: ReadonlySet<string>;
   allowedTools: Set<string>;
   disallowedTools: Set<string>;
   autoApproveHighRisk: boolean;

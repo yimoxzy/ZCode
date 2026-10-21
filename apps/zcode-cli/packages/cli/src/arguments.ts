@@ -76,6 +76,8 @@ export const parseGlobalArgs = (argv: string[]) =>
         type: "boolean",
       },
       "prepare-storage": { type: "boolean" },
+      "managed-profile-stdin": { type: "boolean" },
+      "prompt-stdin": { type: "boolean" },
       stdio: {
         type: "boolean",
       },

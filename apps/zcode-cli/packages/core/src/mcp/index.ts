@@ -247,6 +247,7 @@ export function createMcpToolEntry(
         {
           serverName: descriptor.serverName,
           toolName: descriptor.toolName,
+          toolCallId: context.toolCallId,
           arguments: toMcpRuntimeArguments(input, isCuaAppObservation),
           trace: {
             traceId: context.traceId,

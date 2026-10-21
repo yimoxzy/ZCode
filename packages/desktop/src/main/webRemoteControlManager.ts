@@ -1463,11 +1463,15 @@ export function createWebRemoteControlManager(dependencies: WebRemoteControlMana
     }
   }
 
-  function createQrUrl(deviceSid: string, mobileRemoteControlUrl: string): string {
+  function createQrUrl(
+    deviceSid: string,
+    mobileRemoteControlUrl: string,
+    deviceMid = dependencies.deviceMid,
+  ): string {
     return buildWebRemoteControlExternalQrUrl({
       baseUrl: mobileRemoteControlUrl,
       deviceSid,
-      deviceMid: dependencies.deviceMid,
+      deviceMid,
       deviceName: dependencies.deviceName,
       appVersion: dependencies.appVersion,
     });
@@ -1519,6 +1523,7 @@ export function createWebRemoteControlManager(dependencies: WebRemoteControlMana
           throw new WebRemoteControlV2ConnectionError("auth-required");
         }
         lifecycle.identity = { userId: login.userId, endpointOrigin };
+        const effectiveDeviceMid = login.deviceMid ?? dependencies.deviceMid;
         authRequiredWindows.delete(windowId);
         await dependencies.deviceStorage.clearLegacy();
         assertActive();
@@ -1546,6 +1551,7 @@ export function createWebRemoteControlManager(dependencies: WebRemoteControlMana
             if (
               !force &&
               stored?.userId === current.userId &&
+              (!current.deviceMid || stored.deviceMid === current.deviceMid) &&
               stored.endpointOrigin === endpointOrigin
             )
               return stored.deviceSid;
@@ -1558,7 +1564,7 @@ export function createWebRemoteControlManager(dependencies: WebRemoteControlMana
             }
             registrationSignal.throwIfAborted();
             const deviceSid = await http.register(
-              dependencies.deviceMid,
+              effectiveDeviceMid,
               current.jwt,
               registrationSignal,
             );
@@ -1569,6 +1575,7 @@ export function createWebRemoteControlManager(dependencies: WebRemoteControlMana
                 deviceSid,
                 userId: current.userId,
                 endpointOrigin,
+                ...(current.deviceMid ? { deviceMid: current.deviceMid } : {}),
               });
             } catch (error) {
               // 保存失败不是网络故障；裸错误会让 transport 每次退避都注册新 SID，留下孤儿设备。
@@ -1615,7 +1622,7 @@ export function createWebRemoteControlManager(dependencies: WebRemoteControlMana
           );
           const transport = createTransport({
             relayWsUrl,
-            deviceMid: dependencies.deviceMid,
+            deviceMid: effectiveDeviceMid,
             meta: {
               platform: process.platform,
               version: dependencies.appVersion,
@@ -1643,7 +1650,11 @@ export function createWebRemoteControlManager(dependencies: WebRemoteControlMana
             onStateChange: (state) => {
               if (runtimes.get(windowId) !== runtime) return;
               if (state === "waiting_terminal" || state === "paired") {
-                runtime.qrUrl = runtime.connectUrl = createQrUrl(deviceSid, mobileRemoteControlUrl);
+                runtime.qrUrl = runtime.connectUrl = createQrUrl(
+                  deviceSid,
+                  mobileRemoteControlUrl,
+                  effectiveDeviceMid,
+                );
               }
               mapTransportState(runtime, state);
               if (state === "waiting_terminal" || state === "paired") {
@@ -1705,7 +1716,7 @@ export function createWebRemoteControlManager(dependencies: WebRemoteControlMana
             theme: context.theme,
             status: "starting",
             deviceSid,
-            deviceMid: dependencies.deviceMid,
+            deviceMid: effectiveDeviceMid,
             connectUrl: "",
             qrUrl: "",
             transport,

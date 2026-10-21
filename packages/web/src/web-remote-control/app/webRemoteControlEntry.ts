@@ -76,10 +76,25 @@ export class WebRemoteControlEntry {
 
   async start(): Promise<void> {
     this.reset();
+    const { signal } = this.scope;
     const url = new URL(this.options.getHref());
-    if (isWebRemoteControlOAuthCallback(url)) {
+    if (!this.options.auth.prepareSession && isWebRemoteControlOAuthCallback(url)) {
       this.options.onView({ kind: "callback" });
       return;
+    }
+    if (this.options.auth.prepareSession) {
+      try {
+        await this.options.auth.prepareSession(signal);
+      } catch (error) {
+        if (signal.aborted) return;
+        this.options.onView(
+          error instanceof WebRemoteControlV2ConnectionError && error.reason === "auth-required"
+            ? { kind: "login" }
+            : { kind: "failure", failure: { reason: "relay-unavailable" } },
+        );
+        return;
+      }
+      if (signal.aborted) return;
     }
     if (!this.options.auth.getZCodeJwtToken()) {
       this.options.onView({ kind: "login" });
@@ -99,6 +114,7 @@ export class WebRemoteControlEntry {
 
   private async openDevices(autoConnect: boolean): Promise<void> {
     this.reset();
+    this.watchAuthorization();
     let lastSid: string | null = null;
     let lastMid: string | null = null;
     try {
@@ -132,18 +148,22 @@ export class WebRemoteControlEntry {
     if (!list) return;
     if (list.request) return list.request;
     const jwt = this.options.auth.getZCodeJwtToken();
-    if (!jwt) return this.switchAccount();
-    if (list.acceptedJwt && list.acceptedJwt !== jwt) return this.start();
+    if (!jwt) return this.options.auth.prepareSession ? this.start() : this.switchAccount();
+    const identity = this.identity();
+    if (list.acceptedJwt && list.acceptedJwt !== identity) return this.start();
     const { signal } = this.scope;
     list.view = { ...list.view, loading: true, error: false };
     this.options.onView(list.view);
     list.request = (async () => {
       try {
-        const devices = await this.options.devices(jwt, signal);
+        const devices = await this.relayRequest(
+          (credential) => this.options.devices(credential, signal),
+          signal,
+        );
         if (signal.aborted) return;
         // 账号变更后的响应不能为新账号提供设备或自动连接依据。
-        if (this.options.auth.getZCodeJwtToken() !== jwt) return this.start();
-        list.acceptedJwt = jwt;
+        if (this.identity() !== identity) return this.start();
+        list.acceptedJwt = identity ?? undefined;
         // 先读缓存补全离线记录的名字/平台，再把本次在线记录写回；它们只是展示偏好，不进入 admission。
         const knownDevices = readKnownDevices(this.options.storage);
         const groups = groupWebRemoteControlDevices(devices, this.options.locale, knownDevices);
@@ -157,7 +177,7 @@ export class WebRemoteControlEntry {
         else this.options.onView(list.view);
       } catch (error) {
         if (signal.aborted) return;
-        if (this.options.auth.getZCodeJwtToken() !== jwt) return this.start();
+        if (this.identity() !== identity) return this.start();
         if (
           error instanceof WebRemoteControlV2ConnectionError &&
           error.reason === "auth-required"
@@ -176,7 +196,7 @@ export class WebRemoteControlEntry {
 
   selectDevice(sid: string): void {
     if (!this.list || this.list.view.loading || this.list.view.error) return;
-    if (this.list.acceptedJwt !== this.options.auth.getZCodeJwtToken()) {
+    if (this.list.acceptedJwt !== this.identity()) {
       void this.start();
       return;
     }
@@ -220,13 +240,23 @@ export class WebRemoteControlEntry {
   private connect(params: WebRemoteControlEntryConnection["params"]): void {
     this.reset();
     const { signal } = this.scope;
+    const credentialListeners = new Set<() => void>();
+    this.watchAuthorization(() => {
+      for (const listener of credentialListeners) listener();
+    });
     this.options.connect({
       params,
       signal,
-      getToken: (tokenSignal) => {
-        const jwt = this.options.auth.getZCodeJwtToken();
-        if (!jwt) return Promise.reject(new WebRemoteControlV2ConnectionError("auth-required"));
-        return this.options.token(jwt, tokenSignal);
+      getToken: async (tokenSignal) => {
+        if (signal.aborted) throw new WebRemoteControlV2ConnectionError("auth-required");
+        return this.relayRequest(
+          (credential) => this.options.token(credential, tokenSignal),
+          tokenSignal,
+        );
+      },
+      subscribeCredentialChanged: (listener) => {
+        credentialListeners.add(listener);
+        return () => credentialListeners.delete(listener);
       },
       onPaired: () => {
         if (!signal.aborted) this.rememberDevice(params.deviceSid, params.deviceMid);
@@ -237,6 +267,49 @@ export class WebRemoteControlEntry {
         else this.options.onView({ kind: "failure", failure });
       },
     });
+  }
+
+  private identity(): string | null {
+    return this.options.auth.getSessionIdentity?.() ?? this.options.auth.getZCodeJwtToken();
+  }
+
+  private async relayRequest<T>(
+    request: (credential: string) => Promise<T>,
+    signal: AbortSignal,
+  ): Promise<T> {
+    if (this.options.auth.prepareSession) await this.options.auth.prepareSession(signal);
+    const credential = this.options.auth.getZCodeJwtToken();
+    if (!credential) throw new WebRemoteControlV2ConnectionError("auth-required");
+    try {
+      return await request(credential);
+    } catch (error) {
+      if (
+        signal.aborted ||
+        !this.options.auth.prepareSession ||
+        !(error instanceof WebRemoteControlV2ConnectionError) ||
+        error.reason !== "auth-required"
+      )
+        throw error;
+      // relay 的短期 rc_ 可能先过期；只重签一次，不能把根会话仍有效的用户直接登出。
+      await this.options.auth.prepareSession(signal, true);
+      const refreshed = this.options.auth.getZCodeJwtToken();
+      if (!refreshed) throw new WebRemoteControlV2ConnectionError("auth-required");
+      return request(refreshed);
+    }
+  }
+
+  private watchAuthorization(onCredential?: () => void): void {
+    const { signal } = this.scope;
+    const unsubscribe = this.options.auth.subscribeCredentialChanged?.((change) => {
+      if (signal.aborted) return;
+      if (change === "credential") onCredential?.();
+      else if (change === "identity") void this.start();
+      else {
+        this.reset();
+        this.options.onView({ kind: "login" });
+      }
+    });
+    if (unsubscribe) signal.addEventListener("abort", unsubscribe, { once: true });
   }
 
   startLogin(provider?: WebOAuthProviderId): void {

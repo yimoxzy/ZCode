@@ -1,6 +1,7 @@
 export { cloudContentPayloadSchema, contentBundleSchema } from "./cloudContent.js";
 export * from "./networkCapture.js";
 export * from "./zhiliuHost.js";
+export * from "./zhiliu-runtime/contract.js";
 export type {
   CloudContentPayload,
   CloudContentBundle,
@@ -378,3 +379,4 @@ export {
 export * from "./request-security-edition/verification-policy.js";
 
 export * from "./conversation-share-tool-presentation.js";
+export * from "./zhiliu-runtime/catalog.js";

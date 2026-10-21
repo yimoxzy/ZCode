@@ -41,13 +41,29 @@ export interface WebRemoteControlEntryConnection {
   params: WebRemoteControlV2QrParams & { deviceSid: string };
   signal: AbortSignal;
   getToken(signal: AbortSignal): Promise<string>;
+  /** 同身份短期凭据轮换：既有 transport 重连，保留 V4 attachment 与 UI。 */
+  subscribeCredentialChanged?(listener: () => void): () => void;
   onPaired(): void;
   onFailure(failure: WebRemoteControlFailure): void;
 }
 
+export type WebRemoteControlCredentialChange = "credential" | "identity" | "authorization-lost";
+
+export type WebRemoteControlAuthPort = Pick<
+  WebAuthService,
+  "getZCodeJwtToken" | "getActiveAccount" | "startLogin" | "logout"
+> & {
+  /** 可信 adapter 从同源 SaaS 身份换取内存 relay grant，不在 Entry 内做 HTTP。 */
+  prepareSession?(signal: AbortSignal, force?: boolean): Promise<void>;
+  getSessionIdentity?(): string | null;
+  subscribeCredentialChanged?(
+    listener: (change: WebRemoteControlCredentialChange) => void,
+  ): () => void;
+};
+
 export interface WebRemoteControlEntryOptions {
   // 浏览器 location/history/storage 经现有边界注入，不另存一份登录事实。
-  auth: Pick<WebAuthService, "getZCodeJwtToken" | "getActiveAccount" | "startLogin" | "logout">;
+  auth: WebRemoteControlAuthPort;
   getHref(): string;
   replaceHref(href: string): void;
   storage: Pick<Storage, "getItem" | "setItem">;

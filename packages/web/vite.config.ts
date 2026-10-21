@@ -32,6 +32,11 @@ export default defineConfig(({ mode }) => {
   // 启动脚本通过 process.env 显式选择 test/production；它必须优先于 .env 文件，
   // 否则 share:test 可能被 mode 的旧配置误解析到错误 endpoint。
   const env = { ...loadEnv(mode, REPO_ROOT, ""), ...process.env };
+  // 同一份上游 Web 仍可正常构建；只有织流托管版本注入品牌和模型设置边界。
+  const zhiliuManagedEdition = env.ZHILIU_DESKTOP === "1";
+  const zhiliuLogo = zhiliuManagedEdition
+    ? readFileSync(resolve(REPO_ROOT, "packages/desktop/build/zhiliu/icon.svg"), "utf8")
+    : "";
   const zcodeEnv = resolveZCodeEnv(env.ZCODE_ENV);
   const endpointEnv = {
     ...env,
@@ -45,7 +50,45 @@ export default defineConfig(({ mode }) => {
   const zaiOAuthClientId = resolveZaiOAuthClientId(endpointEnv);
 
   return {
-    plugins: [pdfJsCMapsPlugin(), react(), tailwindcss(), thirdPartyNoticesVitePlugin()],
+    plugins: [
+      {
+        name: "zhiliu:web-branding",
+        transformIndexHtml: {
+          order: "pre",
+          handler(html: string) {
+            if (!zhiliuManagedEdition) return html;
+            return html
+              .replace('<html lang="en">', '<html lang="zh-CN">')
+              .replace(/<title>[^<]*<\/title>/u, "<title>织流</title>")
+              .replace(/<link\s[^>]*rel="icon"[\s\S]*?\/>/gu, "")
+              .replace(
+                /<svg\s[\s\S]*?class="zcode-boot-loading__logo"[\s\S]*?<\/svg>/u,
+                zhiliuLogo.replace(
+                  "<svg ",
+                  '<svg class="zcode-boot-loading__logo" aria-hidden="true" ',
+                ),
+              )
+              .replace('aria-label="Loading..."', 'aria-label="正在连接织流"')
+              .replace(
+                "</head>",
+                `<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,${encodeURIComponent(zhiliuLogo)}" /><style>.zcode-boot-loading__logo-shell{background:#fff}.zcode-boot-loading__logo-shell::before{border-color:rgba(36,131,155,.12)}</style></head>`,
+              );
+          },
+        },
+        generateBundle() {
+          if (zhiliuManagedEdition)
+            this.emitFile({
+              type: "asset",
+              fileName: "favicon.ico",
+              source: readFileSync(resolve(REPO_ROOT, "packages/desktop/build/zhiliu/icon.ico")),
+            });
+        },
+      },
+      pdfJsCMapsPlugin(),
+      react(),
+      tailwindcss(),
+      thirdPartyNoticesVitePlugin(),
+    ],
     resolve: {
       alias: {
         // 修复 UI 组件库中的 @ 别名解析失败。
@@ -94,6 +137,7 @@ export default defineConfig(({ mode }) => {
       },
     },
     define: {
+      __ZHILIU_DESKTOP_ENABLED__: JSON.stringify(zhiliuManagedEdition),
       __ZCODE_VERSION__: JSON.stringify(
         resolveRemoteFrontendVersion(version, process.env.WEB_REMOTE_FRONTEND_VERSION),
       ),

@@ -19,6 +19,7 @@ import { attachZhiliuToolPort } from "./zhiliuToolPort.js";
 import { createZhiliuToolsAttachmentOwner } from "./zhiliuToolsAttachmentOwner.js";
 import { ZHILIU_DESKTOP_ENABLED } from "@zcode/shared";
 import { DesktopInferenceUnavailableError } from "@zcode/services/storage-startup";
+import { createManagedRuntimeAuthority } from "@zcode/services/zhiliu-runtime";
 import { isOffPeakTerminalStatus } from "@zcode/shared";
 import { createHostNetworkCapture } from "./hostNetworkCapture.js";
 import { randomUUID } from "node:crypto";
@@ -76,6 +77,7 @@ import {
   getOffPeakRequestAuthBuilder,
   disposeServiceResources,
   disposeServiceResourcesAndWait,
+  invalidateManagedAgentRuntimes,
   AutomationRepo,
   OffPeakTaskRepo,
   OffPeakTaskService,
@@ -1862,6 +1864,17 @@ let activeSessionRealtimePort: ReturnType<typeof createTaskRealtimeBridgeForHost
 let hasDisposedHostResources = false;
 let disposeHostResourcesInFlight: Promise<HostShutdownResult> | null = null;
 const zhiliuToolsAttachments = createZhiliuToolsAttachmentOwner(attachZhiliuToolPort);
+let zhiliuManagedWarmupTargets: Array<{ workspacePath: string; workspaceIdentity?: string }> = [];
+const zhiliuManagedRuntime = createManagedRuntimeAuthority({
+  stopAgents: async (target) => {
+    if (activeServices) await invalidateManagedAgentRuntimes(activeServices, target);
+  },
+  onAvailable: () => {
+    if (!activeServices || hasDisposedHostResources) return;
+    for (const target of zhiliuManagedWarmupTargets)
+      warmUpZCodeAgent(activeServices, target, "managed account signed in");
+  },
+});
 
 async function disposeHostRemoteConnection(connection: HostRemoteConnection): Promise<void> {
   connection.dispose();
@@ -2781,6 +2794,7 @@ async function disposeHostResources(reason: string): Promise<HostShutdownResult>
   disposeHostResourcesInFlight = (async () => {
     logger.info(`disposing host resources, reason=${reason}`);
     const toolsDisposal = zhiliuToolsAttachments.dispose();
+    await zhiliuManagedRuntime.dispose();
 
     pluginSandboxRegistrationBridge.dispose();
     stopHostNetworkTelemetry();
@@ -2873,6 +2887,7 @@ function disposeHostResourcesBestEffort(reason: string): void {
 
   logger.info(`disposing host resources, reason=${reason}`);
   void zhiliuToolsAttachments.dispose().catch(() => {});
+  void zhiliuManagedRuntime.dispose().catch(() => {});
   pluginSandboxRegistrationBridge.dispose();
   stopHostNetworkTelemetry();
   hostNetworkCapture.setCaptureId(null);
@@ -2964,6 +2979,14 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
   }
 
   const msg = result.data;
+  if (msg.type === HostMessageTypes.AttachZhiliuRuntimePort) {
+    if (!ZHILIU_DESKTOP_ENABLED || hasDisposedHostResources || e.ports.length !== 1) {
+      for (const candidate of e.ports) candidate.close();
+      return;
+    }
+    zhiliuManagedRuntime.attach(e.ports[0]!);
+    return;
+  }
   if (msg.type === HostMessageTypes.AttachZhiliuToolsPort) {
     if (!ZHILIU_DESKTOP_ENABLED || hasDisposedHostResources || e.ports.length !== 1) {
       for (const candidate of e.ports) candidate.close();
@@ -3966,6 +3989,7 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
                 runtimeSurface: "desktop_local_host",
               },
               serviceAuthorityMode: "desktop-local",
+              ...(ZHILIU_DESKTOP_ENABLED ? { managedRuntimeAuthority: zhiliuManagedRuntime } : {}),
               zcodeAgentSpawnFallbackCwd: msg.agentSpawnFallbackCwd,
               zcodeBuiltinProviderConfigFilePath: msg.zcodeBuiltinProviderConfigFilePath,
               processLifecycleReporter: runtimeProcessLifecycleReporter,
@@ -4094,6 +4118,7 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
               : [];
         // Main 已把启动预热限制为 active workspace 1 个；Host 必须显式消费这份固定名单，
         // 不能让后续 task-list observer 再隐式扩大，也不能因失败扫描补位。
+        if (ZHILIU_DESKTOP_ENABLED) zhiliuManagedWarmupTargets = agentWarmupTargets;
         agentWarmupTargets.forEach((target, index) => {
           warmUpZCodeAgent(
             services,

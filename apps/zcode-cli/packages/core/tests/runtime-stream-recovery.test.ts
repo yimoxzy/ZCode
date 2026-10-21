@@ -49,6 +49,22 @@ async function publishModelNetworkStatus(
 }
 
 describe("AgentRuntime reasoning-only stream recovery", () => {
+  it("does not replay partial output when the metered host disables recovery", async () => {
+    let modelCalls = 0;
+    const runtime = createTestAgentRuntime(createSessionId("managed-no-replay"), {
+      mode: "yolo",
+      modelSelection: createTestModelSelection("test/no-replay"), modelStreaming: "on",
+      modelStreamRecoveryEnabled: false,
+    }, {eventStore: createTestSessionEventStore(), modelFactory: createTestModelFactory({
+      async *streamText() {
+        modelCalls += 1;
+        yield {type: "text_delta", text: "partial"};
+        throw createReasoningFailure("network-reset");
+      },
+    } as never)});
+    await runtime.executeTurn("no replay").catch(() => undefined);
+    expect(modelCalls).toBe(1);
+  });
   it.each<ReasoningFailureKind>(["idle-timeout", "network-reset"])(
     "recovers from a retryable %s after visible reasoning without text or tools",
     async (failureKind) => {

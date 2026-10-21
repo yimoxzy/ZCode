@@ -5,6 +5,7 @@ export * from "#src/web-remote-control/adapters/webRemoteControlDeviceInfo.js";
 export * from "#src/web-remote-control/adapters/webRemoteControlThemeSeed.js";
 export * from "#src/web-remote-control/adapters/webRemoteControlTransport.js";
 export * from "#src/web-remote-control/adapters/webRemoteControlV2Token.js";
+export * from "#src/web-remote-control/adapters/zhiliuWebRelayAuth.js";
 export * from "#src/web-remote-control/app/webRemoteControlBridgeRecovery.js";
 export * from "#src/web-remote-control/app/webRemoteControlEntry.js";
 export * from "#src/web-remote-control/app/webRemoteControlKnownDevices.js";

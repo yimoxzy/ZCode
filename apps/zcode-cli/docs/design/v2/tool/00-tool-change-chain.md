@@ -1,5 +1,13 @@
 # Tool Change Chain Spec
 
+## 织流托管启动工具边界（2026-10-21）
+
+可信 stdin Profile → Bootstrap 注入 → 既有 Runtime toolAllowlist → tool registry/权限/执行。
+显式空 allowlist 禁止全部工具；未提供时保留桌面默认工具。Profile 的 pluginManifest 存在时，
+Plugin loader 仅加载列出的 roots，Skill loader 只读这些插件的已解析 roots，禁止个人/项目发现。
+MCP 仅来自该已授权插件快照，不接受普通会话配置覆盖。主/子代理沿用同一约束，审批、取消、
+工具结果和 V4 投影不改。合同见 [managed-runtime.md](../managed-runtime.md)。
+
 ## Bash 临时输出路径隔离
 
 主应用及 workflow 子运行时装配 tmp 父目录 → execution adapter 实际准备具名输出文件 →
@@ -1810,6 +1818,13 @@ schema 只多这个回填键（模型面 JSON schema 不列，带 `predecessor` 
 UI 不变，桌面只从前驱块读 `status` / `name`，旧客户端不受新键影响。
 
 ## 插件使用归属
+
+### 织流平台工具交接
+
+平台工具由可信 startup profile 的独立 loopback MCP endpoint 提供，复用现有 MCP 注册、权限、
+工具事件、模型结果和取消链。capability 只在 adapter transport 闭包，不进入 RPC/配置/日志。
+请求新增可选 toolCallId 元数据用于服务端幂等，不改变模型参数；实际 tenant、Run 和执行权限
+由 SaaS 的授权租约校验。平台 MCP 未知执行失败不能自动重放；本地第三方插件保持原行为。
 
 ToolEntry 的 MCP pluginId 在执行准入时捕获，沿工具成功/失败事件、V4 tool.lifecycle、既有 agent_step 传递。保持 Skill 原字段兼容；普通 MCP 和未知归属留空，不从名字解析、不复制执行事件。仅增加可选 metadata，不改变工具执行、权限、存储和 continuous/replayable 交付。
 

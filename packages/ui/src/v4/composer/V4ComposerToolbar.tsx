@@ -23,6 +23,7 @@ import {
   getModelProviderFamilySpec,
   resolveModelProviderFamilySpecByProviderId,
   ZCODE_AGENT_PROVIDER,
+  ZHILIU_DESKTOP_ENABLED,
   type ProviderFamilyConnectionSelection,
   type ProviderFamilyConnectionSelectionSettings,
   type ProviderFamilyDomain,
@@ -39,6 +40,7 @@ import type {
   SessionUsageState,
 } from "@zcode/shared/zcode-protocol-v4";
 import { ModelConfigSelect, type ModelSelectGroup } from "@/ModelConfigSelect.js";
+import { ZhiliuRuntimeSelect } from "@/zhiliu-runtime-select/index.js";
 import type { ComposerModelOptions } from "@/chat-input-toolbar/ComposerModelMenu.js";
 import { Button } from "@/components/ui/button.js";
 import { HighspeedModelIndicator } from "@/highspeed/HighspeedModelIndicator.js";
@@ -442,6 +444,7 @@ export interface V4ComposerToolbarProps {
 function V4ComposerModelControlsImpl({
   workspacePath,
   workspaceIdentity,
+  phase,
   modelSelectionView = null,
   modelSelectionState = MODEL_SELECTION_LOADING_STATE,
   modelSelectionReload,
@@ -1275,7 +1278,13 @@ function V4ComposerModelControlsImpl({
         />
       ) : null}
       {/* 加速轮的模型由本次卡决定，选型菜单此时不可用，所以指示器优先于选型加载态。 */}
-      {highspeedPresented && highspeedModel ? (
+      {ZHILIU_DESKTOP_ENABLED && !isWebRemoteControl ? (
+        <ZhiliuRuntimeSelect
+          workspacePath={workspacePath}
+          workspaceIdentity={workspaceIdentity}
+          disabled={disabled || phase === "running" || phase === "prewarming"}
+        />
+      ) : highspeedPresented && highspeedModel ? (
         <HighspeedModelIndicator
           model={highspeedModel}
           originalModel={modelTriggerDisplay.fullLabel}
@@ -1359,7 +1368,7 @@ function V4ComposerModelControlsImpl({
       {highspeedPresented && highspeedExpiresAt !== undefined ? (
         <HighspeedCountdown expiresAt={highspeedExpiresAt} />
       ) : null}
-      {thoughtOption && (modelLocked || highspeedPresented) ? (
+      {!ZHILIU_DESKTOP_ENABLED && thoughtOption && (modelLocked || highspeedPresented) ? (
         <ThoughtLevelCycleControl
           composerCollapsePriority={3}
           labelVisibilityClassName="inline-flex"

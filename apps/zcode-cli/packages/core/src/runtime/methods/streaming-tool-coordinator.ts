@@ -196,7 +196,7 @@ export function createStreamingToolCoordinator(
       assistantCreatedAt: number,
       recoveryOptions: { failedRequestId?: string } = {},
     ) {
-      if (state.turnAbortSignal.aborted || !hasStreamRecoveryBudget(state)) return false;
+      if (runtime.config.modelStreamRecoveryEnabled === false || state.turnAbortSignal.aborted || !hasStreamRecoveryBudget(state)) return false;
       const recoveryEventOptions = {
         ...options,
         ...(recoveryOptions.failedRequestId

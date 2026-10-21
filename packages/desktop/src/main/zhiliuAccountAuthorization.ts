@@ -10,6 +10,12 @@ import { constants } from "node:fs";
 import * as fs from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
+import { runtimeGrantSchema } from "@zcode/services/zhiliu-runtime";
+import {
+  zhiliuRuntimeCatalogSchema,
+  zhiliuRuntimeSelectionSchema,
+  type ZhiliuRuntimeSelection,
+} from "@zcode/shared";
 
 const userSchema = z.object({
   id: z.string().uuid(),
@@ -146,6 +152,115 @@ export class ZhiliuAccountHttpError extends Error {
   constructor(readonly status: number) {
     super("织流账号授权无效或服务暂时不可用");
   }
+}
+
+/** 登录凭据只由Main消费，Host收到的仅是限权短期模型grant。 */
+export async function createZhiliuRuntimeGrant(
+  record: StoredZhiliuAccount,
+  workspaceIdentity: string,
+  http: typeof fetch = fetch,
+  now: () => number = Date.now,
+  selection?: ZhiliuRuntimeSelection,
+) {
+  if (!/^local:[a-f0-9]{64}$/u.test(workspaceIdentity)) throw new Error("工作区身份无效");
+  const response = await http(`${record.origin}/api/desktop-auth/runtime-grants`, {
+    method: "POST",
+    redirect: "error",
+    cache: "no-store",
+    signal: AbortSignal.timeout(15000),
+    headers: {
+      Authorization: `Bearer ${record.credential.login_token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      workspace_identity: workspaceIdentity,
+      ...(selection ? zhiliuRuntimeSelectionSchema.parse(selection) : {}),
+      // 仅新版托管 CLI 已验证强制审批与稳定 session/turn 身份；旧客户端缺省必须只读。
+      // 兼容声明固定在 Main，不从 Renderer、选择或环境配置接受用户覆盖。
+      platform_memory_write_capability: "forced_approval_and_execution_identity_v1",
+    }),
+  });
+  if (!response.ok) throw new ZhiliuAccountHttpError(response.status);
+  const grant = runtimeGrantSchema.parse(await response.json());
+  if (
+    Date.parse(grant.expires_at) <= now() ||
+    Date.parse(grant.expires_at) > now() + 960000 ||
+    Date.parse(grant.expires_at) > Date.parse(record.credential.expires_at)
+  )
+    throw new Error("模型授权有效期无效");
+  return { origin: record.origin, grant };
+}
+
+/** Native root credential never crosses the Main boundary; returned catalog has strict safe fields. */
+export async function fetchZhiliuRuntimeCatalog(
+  record: StoredZhiliuAccount,
+  http: typeof fetch = fetch,
+) {
+  const response = await http(`${record.origin}/api/desktop-auth/runtime-catalog`, {
+    method: "GET",
+    redirect: "error",
+    cache: "no-store",
+    signal: AbortSignal.timeout(15000),
+    headers: { Authorization: `Bearer ${record.credential.login_token}` },
+  });
+  if (!response.ok) throw new ZhiliuAccountHttpError(response.status);
+  return zhiliuRuntimeCatalogSchema.parse(await response.json());
+}
+
+export async function revokeZhiliuRuntimeGrant(
+  record: StoredZhiliuAccount,
+  grantId: string,
+  http: typeof fetch = fetch,
+) {
+  z.string().uuid().parse(grantId);
+  const response = await http(`${record.origin}/api/desktop-auth/runtime-grants/${grantId}`, {
+    method: "DELETE",
+    redirect: "error",
+    cache: "no-store",
+    signal: AbortSignal.timeout(12000),
+    headers: { Authorization: `Bearer ${record.credential.login_token}` },
+  });
+  if (!response.ok && response.status !== 401 && response.status !== 404)
+    throw new ZhiliuAccountHttpError(response.status);
+}
+export async function createZhiliuRelayGrant(
+  record: StoredZhiliuAccount,
+  deviceMid: string,
+  http: typeof fetch = fetch,
+  now: () => number = Date.now,
+) {
+  if (deviceMid !== record.credential.device_id) throw new Error("电脑身份不匹配");
+  const response = await http(`${record.origin}/api/desktop-auth/relay-grants`, {
+    method: "POST",
+    redirect: "error",
+    cache: "no-store",
+    signal: AbortSignal.timeout(12000),
+    headers: {
+      Authorization: `Bearer ${record.credential.login_token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ device_mid: deviceMid }),
+  });
+  if (!response.ok) throw new ZhiliuAccountHttpError(response.status);
+  const value = z
+    .object({
+      protocol_version: z.literal(1),
+      relay_grant: z.string().regex(/^rc_[A-Za-z0-9_-]{20,512}$/u),
+      expires_at: z.string().datetime({ offset: true }),
+      principal_id: z.string().min(1).max(200),
+      desktop_device_id: z.string().uuid(),
+    })
+    .strict()
+    .parse(await response.json());
+  if (
+    value.principal_id !== `${record.credential.user_id}:${record.credential.space_id}` ||
+    value.desktop_device_id !== deviceMid ||
+    Date.parse(value.expires_at) <= now() ||
+    Date.parse(value.expires_at) > now() + 360000 ||
+    Date.parse(value.expires_at) > Date.parse(record.credential.expires_at)
+  )
+    throw new Error("远控授权身份或有效期无效");
+  return value;
 }
 export function createZhiliuAccountDeviceIdentity(): ZhiliuAccountDeviceIdentity {
   const pair = generateKeyPairSync("ed25519");

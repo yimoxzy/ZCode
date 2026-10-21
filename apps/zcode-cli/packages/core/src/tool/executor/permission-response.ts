@@ -38,7 +38,7 @@ export function interpretPermissionResponse(params: {
 }): PermissionResponseTransition {
   const { deps, toolCall, entry, mode, decision, outcome, requestId } = params;
   const response = outcome.result;
-  if (mode === "guarded")
+  if (mode === "guarded" || decision.approvalMode === "user-once")
     validatePermissionResponse(response, decision.approvalMode === "user-once");
   if (response.decision === "deny") {
     return {

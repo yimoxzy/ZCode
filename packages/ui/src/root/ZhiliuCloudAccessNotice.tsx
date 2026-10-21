@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { useOpenZhiliuCloud } from "@/hooks/useOpenZhiliuCloud.js";
 
-/** 本地 Agent 尚未开放，保留项目界面并指向真实可用的云授权入口。 */
+/** 托管模型说明；本地与云端均通过织流账号授权。 */
 export function ZhiliuCloudAccessNotice() {
   const { locale } = useZCodeIntl();
   const { openCloud, opening, failed } = useOpenZhiliuCloud();
@@ -15,12 +15,12 @@ export function ZhiliuCloudAccessNotice() {
     >
       <div className="min-w-0 flex-1">
         <p className="font-medium">
-          {chinese ? "在云 Agent 中继续" : "Continue with Cloud Agents"}
+          {chinese ? "使用织流托管模型" : "Use Zhiliu managed models"}
         </p>
         <p className="mt-1 text-ui-caption text-foreground-subtle">
           {chinese
-            ? "本地 Agent 将在平台授权接入后开放，请先登录云 Agent。"
-            : "Local Agents will be available after platform authorization is connected. Sign in to Cloud Agents to continue."}
+            ? "登录织流账号后，可在本地项目使用平台模型；模型和计费由平台统一管理。"
+            : "Sign in to Zhiliu to use platform models in local projects. Your platform manages models and billing."}
         </p>
         {failed && (
           <p role="alert" className="mt-1 text-ui-caption text-destructive">

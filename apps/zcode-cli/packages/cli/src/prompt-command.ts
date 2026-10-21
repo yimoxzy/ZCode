@@ -87,7 +87,8 @@ export const runPrompt = async (
     return 1;
   }
 
-  const slashCommand = parseSlashCommand(prompt);
+  // Managed user text must not invoke local login/model/plugin administration.
+  const slashCommand = deps.managedRuntimeProfile ? undefined : parseSlashCommand(prompt);
   if (slashCommand?.type === "known" && slashCommand.name === "help") {
     ctx.stdout.write(
       `${formatSlashCommandHelp(slashCommand.args, await listCustomCommandsForPrompt(deps), {
@@ -208,7 +209,7 @@ export const runPrompt = async (
     if (prepareTelemetry) {
       shutdownTelemetry = deps.shutdownZCodeTelemetry ?? bootstrapModule?.shutdownZCodeTelemetry;
     }
-    const appEnv = prepareTelemetry
+    const appEnv = prepareTelemetry && !deps.managedRuntimeProfile
       ? await prepareTelemetry(env, {
           cliVersion: version,
           productVersion: env.ZCODE_APP_VERSION,
@@ -222,7 +223,7 @@ export const runPrompt = async (
     }
     providerRegistryRuntime = await startProviderRegistryRuntime(
       appEnv,
-      deps.skipUserConfig
+      deps.managedRuntimeProfile ? { managedRuntimeProfile: deps.managedRuntimeProfile } : deps.skipUserConfig
         ? {}
         : {
             standalone: {
@@ -241,6 +242,7 @@ export const runPrompt = async (
     });
     browserRuntime = createCliHeadlessBrowserRuntime(options, deps);
     app = await createApp({
+      managedRuntimeProfile: deps.managedRuntimeProfile,
       modelSelectionMode: "cli-default",
       browserControlPort: browserRuntime?.browserControlPort,
       env: appEnv,

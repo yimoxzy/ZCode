@@ -283,6 +283,8 @@ export interface PluginLoadOutcome {
 }
 
 export interface PluginDiscoverRequest {
+  /** 可信启动快照：只加载 config.dirs，禁止安装缓存/宿主插件自动发现。 */
+  explicitPluginRootsOnly?: boolean;
   config: PluginConfig;
   env?: Record<string, string | undefined>;
   // bootstrap 可以把"安全到默认就开"的 official plugin id 列表传进来,

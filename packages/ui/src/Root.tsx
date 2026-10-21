@@ -166,9 +166,7 @@ export function Root(props: RootProps) {
               <TabStoreProvider>
                 <ProjectDirectoryProvider isDesktop={props.isDesktop}>
                   <DiffsWorkerPoolProvider>
-                    <WebRemoteControlFeatureProvider
-                      enabled={!ZHILIU_DESKTOP_ENABLED && props.webRemoteControlFeatureEnabled}
-                    >
+                    <WebRemoteControlFeatureProvider enabled={props.webRemoteControlFeatureEnabled}>
                       <AssistantCodeCommentFeatureProvider
                         enabled={props.assistantCodeCommentCardsEnabled}
                       >

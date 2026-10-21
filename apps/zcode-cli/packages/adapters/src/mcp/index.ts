@@ -115,6 +115,10 @@ const MCP_STDIO_STDERR_LOG_MAX_CHARS = 4_000;
 const MAX_TRACKED_SERVER_REQUEST_IDS = 64;
 
 export interface CreateMcpAdapterOptions {
+  /** Trusted embedding only; secret transport remains outside serializable server config. */
+  trustedServerTransports?: Readonly<Record<string, {
+    url: string; fetch: typeof globalThis.fetch; singleAttempt?: boolean;
+  }>>;
   clientName?: string;
   clientVersion?: string;
   connectionContext?: McpConnectionContext;
@@ -249,6 +253,7 @@ class NodeMcpAdapter implements McpPort {
   private readonly mcpOAuth?: McpOAuthRuntimeOptions;
   private readonly network?: NetworkEgressEnvPolicy;
   private readonly officialMcpAuth?: CreateMcpAdapterOptions["officialMcpAuth"];
+  private readonly trustedServerTransports?: CreateMcpAdapterOptions["trustedServerTransports"];
   private readonly telemetry?: McpTelemetryTracker;
   private readonly connectionGenerations = new Map<string, number>();
   private credentialStore?: SharedZCodeCredentialStore;
@@ -296,6 +301,7 @@ class NodeMcpAdapter implements McpPort {
     this.mcpOAuth = options.mcpOAuth;
     this.network = options.network;
     this.officialMcpAuth = options.officialMcpAuth;
+    this.trustedServerTransports = options.trustedServerTransports;
     this.telemetry = options.telemetry;
     this.workingDirectory = options.workingDirectory;
     this.elicitation = options.elicitation;
@@ -808,6 +814,7 @@ class NodeMcpAdapter implements McpPort {
         options.onProgress,
       );
     } catch (error) {
+      if (this.trustedServerTransports?.[request.serverName]?.singleAttempt) throw error;
       if (options.appConnection) throw error;
       // 连接建立后 token 过期、被撤销或 scope 不足时，
       // 过去这些认证错误原样冒泡，用户看到裸错误且永远不会自愈——OAuth 自愈只存在于
@@ -1163,7 +1170,7 @@ class NodeMcpAdapter implements McpPort {
         {
           name: request.toolName,
           arguments: request.arguments ?? {},
-          ...(request.trace || request.runtimeScope || request.workspaceKey || request.workspacePath
+          ...(request.toolCallId || request.trace || request.runtimeScope || request.workspaceKey || request.workspacePath
             ? { _meta: mcpRequestMeta(request) }
             : {}),
         },
@@ -1914,6 +1921,13 @@ class NodeMcpAdapter implements McpPort {
     workingDirectory?: string,
     signal?: AbortSignal,
   ): Promise<{ transport: McpTransport }> {
+    const trusted = this.trustedServerTransports?.[serverName];
+    if (trusted) {
+      if (config.type !== "http" || config.url !== trusted.url || config.headers || config.oauth || config.auth) {
+        throw new Error("zhiliu_managed_mcp_config_rejected");
+      }
+      return {transport: new StreamableHTTPClientTransport(new URL(trusted.url), {fetch: trusted.fetch})};
+    }
     if (config.type === "stdio") {
       return {
         transport: new ProcessTreeStdioClientTransport({
@@ -2305,6 +2319,7 @@ function mcpRequestMeta(request: McpCallToolRequest): Record<string, unknown> {
   // bridge 则以它们作为回到当前 BrowserControlPort session 的唯一关联依据。runtime_scope
   // 不能从 child session id 猜测，必须由实际执行工具的 runtime 显式透传。
   const requestContext = {
+    ...(request.toolCallId ? { tool_call_id: request.toolCallId } : {}),
     ...(request.trace ? { trace_id: request.trace.traceId } : {}),
     ...(request.trace?.spanId ? { span_id: request.trace.spanId } : {}),
     ...(request.trace?.parentSpanId ? { parent_span_id: request.trace.parentSpanId } : {}),

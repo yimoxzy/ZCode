@@ -5,6 +5,7 @@ import {
   type AccountProviderConfigSnapshot,
   type AccountProviderStates,
 } from "@zcode/provider";
+import { createManagedProcessProviderRuntime } from "../managed-runtime/index.js";
 import {
   isBuiltinModelProviderId,
   resolveRuntimeZCodeEndpointOrigin,
@@ -31,6 +32,7 @@ import {
 } from "./standalone-account-provider-runtime.js";
 
 export interface ProcessProviderRegistryRuntimeOptions {
+  readonly managedRuntimeProfile?: import("@zcode/shared").ZhiliuManagedRuntimeProfile;
   /** Standalone Prompt CLI / TUI 自己拥有账号凭据与旧配置的一次性导入。 */
   readonly standalone?: {
     readonly credentialStore?: SharedZCodeCredentialStore;
@@ -46,6 +48,7 @@ export async function startProcessProviderRegistryRuntime(
   env: Readonly<Record<string, string | undefined>>,
   options: ProcessProviderRegistryRuntimeOptions = {},
 ) {
+  if (options.managedRuntimeProfile) return createManagedProcessProviderRuntime(options.managedRuntimeProfile);
   const paths = resolveNodeProviderRuntimePaths(env);
   if (!paths) {
     throw new Error("缺少进程 Provider Registry 的 ZCode Built-in / Personal Config 路径");

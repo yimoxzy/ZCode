@@ -10,8 +10,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs.j
 import { Switch } from "@/components/ui/switch.js";
 import { ControlHintTooltip } from "@/ControlHintTooltip.js";
 import { TID_PLUGIN_STORE_BROWSE } from "@zcode/shared/test-ids";
-import { ZHILIU_DESKTOP_ENABLED } from "@zcode/shared";
-import { ZhiliuCloudAccessNotice } from "@/root/ZhiliuCloudAccessNotice.js";
 import type { ZCodePluginInfo, ZCodePluginScope, ZCodePluginUserConfigOption } from "@zcode/shared";
 import type { CreateTaskRequest } from "@/app-shell/types.js";
 import type { IServiceAccessor } from "@zcode/services";
@@ -953,7 +951,8 @@ function EmptyState({ message }: { message: string }) {
 }
 
 export function PluginsSection(props: PluginsSectionProps) {
-  return ZHILIU_DESKTOP_ENABLED ? <ZhiliuCloudAccessNotice /> : <PluginsSectionImpl {...props} />;
+  // 织流只限制模型准入，插件/Skill/MCP仍复用上游完整入口与工作区权限。
+  return <PluginsSectionImpl {...props} />;
 }
 
 function PluginsSectionImpl({

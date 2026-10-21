@@ -22,6 +22,7 @@ const profile = {
   transport: "docker",
   target,
   createdAt: 1,
+  lifecycleState: "active",
 } as const;
 
 function fixture() {

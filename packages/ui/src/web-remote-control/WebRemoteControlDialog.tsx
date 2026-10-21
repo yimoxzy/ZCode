@@ -11,6 +11,8 @@ import {
 import { memo, useEffect, useMemo, useState } from "react";
 import QRCode from "qrcode";
 import type { BotProvider, WebRemoteControlStatus } from "@zcode/shared";
+import { ZHILIU_DESKTOP_ENABLED } from "@zcode/shared";
+import { useZhiliuAccount } from "@/hooks/useZhiliuAccount.js";
 import {
   Bot as BotIcon,
   CopyIcon,
@@ -50,6 +52,39 @@ const REMOTE_CONTROL_BOT_ENTRIES: Array<{
 ];
 
 function WebRemoteControlLoginButton({ onOpenChange }: { onOpenChange: (open: boolean) => void }) {
+  return ZHILIU_DESKTOP_ENABLED ? (
+    <ZhiliuWebRemoteControlLoginButton onOpenChange={onOpenChange} />
+  ) : (
+    <UpstreamWebRemoteControlLoginButton onOpenChange={onOpenChange} />
+  );
+}
+function ZhiliuWebRemoteControlLoginButton({
+  onOpenChange,
+}: {
+  onOpenChange: (open: boolean) => void;
+}) {
+  const { intl } = useZCodeIntl();
+  const { busy, login } = useZhiliuAccount();
+  return (
+    <Button
+      type="button"
+      data-testid="web-remote-control-login"
+      className="enabled:cursor-pointer"
+      disabled={busy}
+      onClick={() => {
+        onOpenChange(false);
+        void login();
+      }}
+    >
+      {intl.formatMessage({ id: "webRemoteControl.authRequired.login" })}
+    </Button>
+  );
+}
+function UpstreamWebRemoteControlLoginButton({
+  onOpenChange,
+}: {
+  onOpenChange: (open: boolean) => void;
+}) {
   const { intl } = useZCodeIntl();
   const hasUser = useZCodeStore((state) => Boolean(state.user));
   const requestLoginEntry = useZCodeStore((state) => state.requestLoginEntry);

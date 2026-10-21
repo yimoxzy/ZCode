@@ -13,7 +13,6 @@ import { CircleCheck, RotateCcw, TriangleAlert } from "lucide-react";
 import {
   AUTOMATION_CREATE_LIMIT,
   BUILTIN_MODEL_PROVIDER_IDS,
-  ZHILIU_DESKTOP_ENABLED,
   isAutomationCreateLimitError,
   resolveWorkspaceKey,
   type ZCodeAutomation,
@@ -30,7 +29,6 @@ import {
   TID_OFFPEAK_TAB,
 } from "@zcode/shared/test-ids";
 import { Button } from "@/components/ui/button.js";
-import { ZhiliuCloudAccessNotice } from "@/root/ZhiliuCloudAccessNotice.js";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -518,11 +516,8 @@ function AutomationStatusFilterEmpty() {
 }
 
 export function AutomationsSection(props: AutomationsSectionProps) {
-  return ZHILIU_DESKTOP_ENABLED ? (
-    <ZhiliuCloudAccessNotice />
-  ) : (
-    <AutomationsSectionImpl {...props} />
-  );
+  // 品牌包装不隐藏自动化；执行时继续由托管模型与Host准入决定。
+  return <AutomationsSectionImpl {...props} />;
 }
 
 function AutomationsSectionImpl({

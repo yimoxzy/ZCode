@@ -94,7 +94,7 @@ try {
       : null;
     if (live) assert.equal(readiness?.status, "ready");
     process.stdout.write(
-      `${JSON.stringify({ passed: true, live, checks: ["installed startup without Main Inspector", "browser account sign-in entry", "visible computer connection entry", "no personal model/key/password form", "Zhiliu brand marks", "SaaS ready"], schema: readiness?.schema.current })}\n`,
+      `${JSON.stringify({ passed: true, live, checks: ["installed startup without Main Inspector", "browser account sign-in entry", "visible computer connection entry", "no personal model/key/password form", "Zhiliu brand marks", ...(live ? ["SaaS ready"] : [])], schema: readiness?.schema.current })}\n`,
     );
   } else {
     const [cloud] = await Promise.all([

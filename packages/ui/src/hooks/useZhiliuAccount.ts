@@ -3,6 +3,8 @@ import { DesktopCommandIds } from "@zcode/shared";
 import { usePlatform } from "./usePlatform.js";
 import { logger } from "@/logger.js";
 
+const ACCOUNT_CHANGED_EVENT = "zhiliu-account-changed";
+
 export interface ZhiliuAccountView {
   phase: "logged_out" | "authorizing" | "authenticated" | "unavailable";
   user?: { nickname?: string; email?: string };
@@ -15,7 +17,9 @@ function readAccount(value: unknown): ZhiliuAccountView | null {
     !value ||
     typeof value !== "object" ||
     !("phase" in value) ||
-    !["logged_out", "authorizing", "authenticated", "unavailable"].includes(String(value.phase))
+    !["logged_out", "authorizing", "authenticated", "unavailable"].includes(
+      String(value.phase),
+    )
   )
     return null;
   return value as ZhiliuAccountView;
@@ -24,7 +28,9 @@ function readAccount(value: unknown): ZhiliuAccountView | null {
 /** Main owns identity; this hook keeps only its public display projection. */
 export function useZhiliuAccount() {
   const platform = usePlatform();
-  const [account, setAccount] = useState<ZhiliuAccountView>({ phase: "logged_out" });
+  const [account, setAccount] = useState<ZhiliuAccountView>({
+    phase: "logged_out",
+  });
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(false);
   const epoch = useRef(0);
@@ -33,9 +39,12 @@ export function useZhiliuAccount() {
     const current = epoch.current;
     try {
       const next = readAccount(
-        await platform.executeDesktopCommand(DesktopCommandIds.GetZhiliuAccount),
+        await platform.executeDesktopCommand(
+          DesktopCommandIds.GetZhiliuAccount,
+        ),
       );
-      if (mounted.current && current === epoch.current && next) setAccount(next);
+      if (mounted.current && current === epoch.current && next)
+        setAccount(next);
     } catch {
       // A status read must not expose a credential-bearing native exception.
       if (mounted.current && current === epoch.current) setFailed(true);
@@ -44,10 +53,13 @@ export function useZhiliuAccount() {
   useEffect(() => {
     mounted.current = true;
     void refresh();
+    const onAccountChanged = () => void refresh();
+    window.addEventListener(ACCOUNT_CHANGED_EVENT, onAccountChanged);
     const timer = setInterval(() => void refresh(), 15000);
     return () => {
       mounted.current = false;
       clearInterval(timer);
+      window.removeEventListener(ACCOUNT_CHANGED_EVENT, onAccountChanged);
     };
   }, [refresh]);
   const run = async (
@@ -59,14 +71,18 @@ export function useZhiliuAccount() {
     const current = ++epoch.current;
     setFailed(false);
     setBusy(true);
-    if (command === DesktopCommandIds.LoginZhiliu) setAccount({ phase: "authorizing" });
+    if (command === DesktopCommandIds.LoginZhiliu)
+      setAccount({ phase: "authorizing" });
     try {
       const value = await platform.executeDesktopCommand(command);
       if (current !== epoch.current || !mounted.current) return;
       const next = readAccount(value);
       if (next) {
         setAccount(next);
-        if (command === DesktopCommandIds.LoginZhiliu && next.phase !== "authenticated")
+        if (
+          command === DesktopCommandIds.LoginZhiliu &&
+          next.phase !== "authenticated"
+        )
           setFailed(true);
       }
       await refresh();
@@ -78,6 +94,8 @@ export function useZhiliuAccount() {
       }
     } finally {
       if (current === epoch.current && mounted.current) setBusy(false);
+      // 只广播失效信号；每个视图从 Main 重读公开投影，不通过 DOM 传播凭据或账号对象。
+      window.dispatchEvent(new Event(ACCOUNT_CHANGED_EVENT));
     }
   };
   return {

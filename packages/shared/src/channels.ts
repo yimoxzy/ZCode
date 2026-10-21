@@ -621,6 +621,8 @@ export const HostMessageTypes = {
   AttachServicePort: "attach-service-port",
   /** 织流 Main 独占的文件工具连接，不向 Renderer 暴露。 */
   AttachZhiliuToolsPort: "attach-zhiliu-tools-port",
+  /** Main独占模型授权的私有端口，不接Renderer。 */
+  AttachZhiliuRuntimePort: "attach-zhiliu-runtime-port",
   /** main → host：精确释放一个 RPC MessagePort attachment */
   DetachServicePort: "detach-service-port",
   /** 窗口关闭，清理资源 */
