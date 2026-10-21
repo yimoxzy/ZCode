@@ -79,6 +79,8 @@ describe("Window Host 的 Source 重连与数据库启动整合", () => {
       const createHandle = runInNewContext(
         `${compile(node.getText(source))};createWindowRemoteConnectionHandle;`,
         {
+          // 抽取函数体不会携带 import；本组验证上游 Source 能力，显式注入标准构建开关。
+          ZHILIU_DESKTOP_ENABLED: false,
           connectSourceServerTarget,
           activeServices: { get: () => clientConfig },
           IClientConfigService: {},
@@ -191,6 +193,8 @@ describe("Window Host 的 Source 重连与数据库启动整合", () => {
     const run = runInNewContext(
       `${compile(`async function run() { ${initNode.getText(source)} }`)};run;`,
       {
+        // InitLocal 也读取构建开关；保持标准构建的 Source 后台初始化与原断言一致。
+        ZHILIU_DESKTOP_ENABLED: false,
         databaseStartup: undefined,
         activeSessionRealtimePort: null,
         activeServices: null,

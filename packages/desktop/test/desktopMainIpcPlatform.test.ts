@@ -374,6 +374,11 @@ describe("registerPlatformIpcHandlers", () => {
     await expect(handler?.({ sender: {} }, DesktopCommandIds.GetCuaOsSupport)).resolves.toEqual({
       kind: "supported",
     });
-    expect(executeDesktopCommand).toHaveBeenCalledWith(DesktopCommandIds.GetCuaOsSupport, null);
+    // IPC 现已统一转发可选 input；无 payload 也应严格校验第三个 undefined 参数。
+    expect(executeDesktopCommand).toHaveBeenCalledWith(
+      DesktopCommandIds.GetCuaOsSupport,
+      null,
+      undefined,
+    );
   });
 });

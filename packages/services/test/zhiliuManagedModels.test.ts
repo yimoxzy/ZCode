@@ -22,9 +22,10 @@ import {
 } from "../src/model-provider/providerProvisioningTarget.js";
 import { ZCodeAgentProcessManager } from "../src/zcode-agent/zcodeAgentProcessManager.js";
 
-function unreadableOptions<T extends object>(): T {
-  return new Proxy({} as T, {
-    get(_target, key) {
+function unreadableOptions<T extends object>(available: Partial<T> = {}): T {
+  return new Proxy(available as T, {
+    get(target, key) {
+      if (Object.hasOwn(target, key)) return Reflect.get(target, key);
       throw new Error(`不应读取被禁用的配置来源: ${String(key)}`);
     },
   });
@@ -32,7 +33,10 @@ function unreadableOptions<T extends object>(): T {
 
 describe("织流只允许平台托管模型", () => {
   it("不读取个人/内置文件、legacy 回调或远端配置；仓库为只读空目录", async () => {
-    const runtime = createProviderConfigRuntime(unreadableOptions<ProviderConfigRuntimeOptions>());
+    // 托管 authority 是合法依赖注入；旧夹具误将其与禁止读取的个人/文件配置来源一起拦截。
+    const runtime = createProviderConfigRuntime(
+      unreadableOptions<ProviderConfigRuntimeOptions>({ managedRuntimeAuthority: undefined }),
+    );
     try {
       await runtime.start();
       const config = await runtime.configService.read();
