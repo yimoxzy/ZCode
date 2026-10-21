@@ -29,6 +29,33 @@ WS完全复用auth*init、pair_status_query、data与auth_ack、pair_status_ack�
 
 adapter 在过期前 30 秒刷新，单请求在途且用代次丢弃 logout/dispose 后的迟到响应。相同 `principal_id` 和目标设备换凭据时，通过原 transport 的 suspend/recoverInBackground 关闭旧 socket、取新一次性 token、恢复既有 replayable attachment；不卸载任务 UI、不复制待执行队列。principal/目标设备变更必须撤销 Entry 导航代次并重新 admission，不能把旧设备列表/任务留给新空间。401 仅尝试一次原刷新端点；仍失败或 403 清内存授权并引导同源织流登录；网络故障不继续使用已失效凭据，原 transport 负责重连退避，服务端仍每 5 秒校验根授权。
 
+### 活跃 socket 的限次续签（真实验收回归）
+
+已确认根因：Main 的 `authorizeRelay` 原本只在下一次 HTTP/建连时刷新 `rc_`；device socket 已配对或等待 terminal 时收到 300 秒过期 `AUTH_FAILED`，transport 直接终止 manager。Web 虽已有 -30 秒主动刷新，后台计时暂停也可能先收到过期错误。V2 error 不区分过期与撤销，因此不能把所有 `AUTH_FAILED` 当作过期无限重试。
+
+transport 仅在本 socket 已收到且校验通过 `auth_ack` 后允许一次重新认证：关闭这一代 socket，保持 SID、manager runtime、Host attachment 与 RPC ACK/journal，由原 `getToken` 端口重新经过 Main/Web 授权 owner 和一次性 token HTTP，再建立下一代 socket。60 秒窗口内最多一次此恢复；恢复握手再次 `AUTH_FAILED`、参数错误及 HTTP 401/403均终止，不重注册、不继续尝试。下一次合法 `auth_ack` 只证明新 socket 认证；不能绕过 60 秒恢复预算。正常 300 秒凭据周期允许持续工作，等待 terminal 与运行任务都使用相同机制。未认证首次握手保留上游已有的单次 SID 重注册，但续签失败不得再落入此分支。
+
+Main 签发端点 401/403 走既有账号 invalidation/Host teardown 屏障；迟到旧账号结果不能复活。Web 继续主动刷新，兜底重新认证仍由已有 SaaS 身份 owner 的 `prepareSession` 执行。socket generation 在关闭前递增；旧 close、ACK、HTTP 回包与 dispose/logout 之后的结果均不得推进新连接。续签不调用新建任务、不重放模型请求，不创建 CLI/Host 或第二队列；桌面 continuous 流不变，Web 通过原 replayable snapshot/gap/ACK 恢复。
+
+```mermaid
+sequenceDiagram
+ participant T as 原 Device/Web transport
+ participant A as Main/Web 授权 owner
+ participant R as Relay
+ participant H as 原 Host attachment/CLI
+ R-->>T: 已认证 socket AUTH_FAILED
+ T->>T: 60秒限一次；撤销旧socket代次
+ T->>A: 原 getToken / getLogin
+ A->>A: 失效rc_重签；根401/403终止
+ A->>R: 新rc_换一次性WS token
+ T->>R: 新socket auth_init(原SID)
+ R-->>T: 校验通过 auth_ack
+ T->>H: 原attachment继续ACK/缺口恢复
+ Note over H: 任务、队列、模型执行均不重建
+```
+
+自动回归覆盖 waiting/paired、两次300秒轮换、短时间重复AUTH_FAILED终止、续签401/403、dispose与迟到回包。最终联合验收需实际安装客户端和Web保持同一任务跨至少两个300秒边界，再发送/取消，并证明无重复账单、撤销设备及时断开；加速时钟测试不能替代这一证据。
+
 凭据刷新、页面可见恢复、设备列表和连接 token 请求共用同一授权 owner。不新增持久凭据种类，只沿用 SaaS 现有 sessionStorage 身份字段及既有最近设备 SID/MID 展示偏好，不持久化 `rc_`、`dl_` 或上游 Key；错误只保留 auth-required/relay-unavailable 分类。登录返回地址限定当前 origin 的 `/remote/v4`，同标签页导航保留原 SaaS 身份，禁止跨 origin 传递 Token、URL 参数或 postMessage。验收包括同源 Bearer 签发、严格响应、并发去重、过期刷新、scope 切换、logout 迟到回包、取消、rc\_ 无存储和原 V4 连接恢复。
 
 首次为单实例、内存设备目录；重启后已有客户端按上游AUTH_FAILED重注册并恢复attachment，不持久化消息。多实例扩容前必须把设备/token/owner原子操作移到共享存储；本版禁止无粘性多副本部署。反向代理使用同SaaS HTTPS origin、剥离token查询访问日志，不开放跨站CORS。部署配置只接受固定内省URL、service secret、监听地址与端口，启动检查。

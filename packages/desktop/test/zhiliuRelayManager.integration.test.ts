@@ -15,18 +15,29 @@ import { createWebRemoteControlFeatureGate } from "../src/main/webRemoteControlF
 const cleanups: Array<() => void | Promise<void>> = [];
 afterEach(async () => {
   for (const dispose of cleanups.splice(0).reverse()) await dispose();
+  vi.restoreAllMocks();
 });
 
 it("真实自有Relay连接原Main manager，native设备注册、V4双向Host附件及登出撤销兼容", async () => {
-  const deviceGrant = "rc_test_manager_device_01234567890123456789";
+  let deviceGrant = "rc_test_manager_device_01234567890123456789";
   const terminalGrant = "rc_test_manager_terminal_01234567890123456789";
-  const principal = exampleRelayPrincipal;
+  let clock = Date.now();
+  vi.spyOn(Date, "now").mockImplementation(() => clock);
+  const principal = {
+    ...exampleRelayPrincipal,
+    expires_at: new Date(clock + 300_000).toISOString(),
+  };
   const grants = new Map<string, RelayPrincipal>([
     [deviceGrant, principal],
-    [terminalGrant, { ...principal, role: "terminal", device_mid: null, desktop_device_id: null }],
+    [
+      terminalGrant,
+      { ...exampleRelayPrincipal, role: "terminal", device_mid: null, desktop_device_id: null },
+    ],
   ]);
   const relay = await createZhiliuRelay({
     publicOrigin: "https://platform.example",
+    now: () => clock,
+    revalidateIntervalMs: 50,
     introspect: async (grant) => {
       const value = grants.get(grant);
       if (!value) throw new Error("revoked");
@@ -58,10 +69,17 @@ it("真实自有Relay连接原Main manager，native设备注册、V4双向Host�
       ...buildZCodeEndpointUrls(relay.httpUrl, { appVersion: "3.16.2" }),
       relayWsUrl: relay.wsUrl,
     }),
-    getLogin: async () =>
-      authenticated
-        ? { userId: principal.principal_id, jwt: deviceGrant, deviceMid: principal.device_mid! }
-        : undefined,
+    getLogin: async () => {
+      if (!authenticated) return undefined;
+      if (Date.parse(grants.get(deviceGrant)!.expires_at) <= clock + 30_000) {
+        deviceGrant += "_renewed";
+        grants.set(deviceGrant, {
+          ...principal,
+          expires_at: new Date(clock + 300_000).toISOString(),
+        });
+      }
+      return { userId: principal.principal_id, jwt: deviceGrant, deviceMid: principal.device_mid! };
+    },
     deviceMid: "legacy-machine-mid-must-not-be-used",
     deviceName: "织流本地测试",
     appVersion: "3.16.2",
@@ -119,20 +137,31 @@ it("真实自有Relay连接原Main manager，native设备注册、V4双向Host�
   manager.syncAvailableWorkspaces(1, [
     { workspacePath: "/workspace/demo", label: "demo", kind: "local" },
   ]);
-  const ticket = (await (
-    await fetch(`${relay.httpUrl}/api/v1/remote/token`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({ role: "terminal" }),
-    })
-  ).json()) as { data: { token: string } };
-  const socket = new WebSocket(`${relay.wsUrl}?token=${ticket.data.token}`);
-  cleanups.push(() => socket.terminate());
+  const pair = async () => {
+    const ticket = (await (
+      await fetch(`${relay.httpUrl}/api/v1/remote/token`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ role: "terminal" }),
+      })
+    ).json()) as { data: { token: string } };
+    const socket = new WebSocket(`${relay.wsUrl}?token=${ticket.data.token}`);
+    cleanups.push(() => socket.terminate());
+    const paired: unknown[] = [];
+    socket.on("message", (raw) => {
+      const message = JSON.parse(raw.toString());
+      messages.push(message);
+      paired.push(message);
+    });
+    await once(socket, "open");
+    socket.send(JSON.stringify({ type: "auth_init", device_sid: started.sessionId }));
+    await vi.waitFor(() =>
+      expect(paired).toContainEqual(expect.objectContaining({ type: "auth_ack" })),
+    );
+    return socket;
+  };
   const messages: Array<{ type: string; payload?: Record<string, unknown> }> = [];
-  socket.on("message", (raw) => messages.push(JSON.parse(raw.toString())));
-  await once(socket, "open");
-  socket.send(JSON.stringify({ type: "auth_init", device_sid: started.sessionId }));
-  await vi.waitFor(() => expect(messages.some((item) => item.type === "auth_ack")).toBe(true));
+  let socket = await pair();
   const send = (payload: unknown) => socket.send(JSON.stringify({ type: "data", payload }));
   send({ zcode_type: "bootstrap-request", requestId: "real-relay-bootstrap" });
   await vi.waitFor(() =>
@@ -193,6 +222,32 @@ it("真实自有Relay连接原Main manager，native设备注册、V4双向Host�
       }),
     ),
   );
+  send({ zcode_type: "rpc-frame-ack", bridgeSessionId: "bridge-main", ackMessageSeq: 1 });
+  send({ zcode_type: "bootstrap-request", requestId: "ack-before-clock-jump" });
+  await vi.waitFor(() =>
+    expect(messages).toContainEqual(
+      expect.objectContaining({
+        payload: expect.objectContaining({ requestId: "ack-before-clock-jump" }),
+      }),
+    ),
+  );
+  for (let cycle = 0; cycle < 2; cycle++) {
+    const previous = deviceGrant;
+    clock += 300_000;
+    await vi.waitFor(() => expect(deviceGrant).not.toBe(previous));
+    await vi.waitFor(() => expect(socket.readyState).toBe(WebSocket.CLOSED));
+    await vi.waitFor(async () => {
+      const list = await (await fetch(`${relay.httpUrl}/api/v1/remote/device`, { headers })).json();
+      expect(list.data[0]?.online).toBe(true);
+    });
+    socket = await pair();
+    await vi.waitFor(() => expect(manager.getStatus(1).status).toBe("active"));
+    expect(settings.webRemoteControlRelayV2Device?.deviceSid).toBe(started.sessionId);
+    expect(attachWorkspaceHost).toHaveBeenCalledOnce();
+    expect(releaseWorkspaceHostAttachment).not.toHaveBeenCalled();
+    expect(hostPort.close).not.toHaveBeenCalled();
+    expect(hostPort.postMessage).toHaveBeenCalledOnce();
+  }
   authenticated = false;
   await manager.notifyAuthStateChanged(1, { state: "signed-out" });
   await vi.waitFor(() => expect(socket.readyState).toBe(WebSocket.CLOSED));

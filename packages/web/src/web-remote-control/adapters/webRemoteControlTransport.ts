@@ -34,6 +34,8 @@ import {
   type WebRemoteControlRelayV2OutgoingMessage,
 } from "@zcode/shared/web-remote-relay";
 
+const AUTH_RECOVERY_WINDOW_MS = 60_000;
+
 export class WebRemoteControlTerminalTransport {
   private readonly WebSocketCtor: typeof globalThis.WebSocket;
   private socket?: WebSocket;
@@ -50,6 +52,8 @@ export class WebRemoteControlTerminalTransport {
   private tokenController?: AbortController;
   private handshakeTimer?: ReturnType<typeof setTimeout>;
   private authenticated = false;
+  private authorizationRecoveryAt?: number;
+  private authorizationRecoveryPending = false;
   private readonly heartbeat: WebRemoteControlV2Heartbeat;
   private socketGeneration = 0;
   private lastPairedSocketGeneration = 0;
@@ -318,6 +322,7 @@ export class WebRemoteControlTerminalTransport {
         if (this.state !== "authenticating" || message.device_sid !== this.options.deviceSid)
           return;
         this.authenticated = true;
+        this.authorizationRecoveryPending = false;
         clearTimeout(this.handshakeTimer);
         this.retry.acknowledged();
         this.applyPairStatus(message.pair_status);
@@ -397,6 +402,20 @@ export class WebRemoteControlTerminalTransport {
       // 旧逻辑会立刻渲染“电脑端离线”终态页，实际桌面 1~2 秒后就恢复 paired。
       // 这里先进入可恢复重连窗口，超过宽限时间仍未 paired 才认定桌面真正离线。
       this.recoverFromDeviceOffline(message || code);
+      return;
+    }
+    if (
+      code === "AUTH_FAILED" &&
+      this.authenticated &&
+      !this.authorizationRecoveryPending &&
+      (this.authorizationRecoveryAt === undefined ||
+        Date.now() - this.authorizationRecoveryAt >= AUTH_RECOVERY_WINDOW_MS)
+    ) {
+      // 手机后台可能错过主动 rc_ 续签；仅轮换 socket，让原授权 owner 检查/刷新根身份。
+      // V2 不区分过期和撤销，60秒内最多一次；握手或签发401/403仍必须终止。
+      this.authorizationRecoveryAt = Date.now();
+      this.authorizationRecoveryPending = true;
+      this.scheduleReconnect({ immediate: true });
       return;
     }
     if (code === "AUTH_FAILED" || code === "WRONG_PARAM") {

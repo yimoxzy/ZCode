@@ -7,6 +7,7 @@ import {
   WebRemoteControlDeviceTransport,
 } from "#src/main/web-remote-relay/index.js";
 import { WebSocket } from "ws";
+import { WebRemoteControlV2ConnectionError } from "@zcode/shared/web-remote-relay";
 
 const cleanups: Array<() => void | Promise<void>> = [];
 afterEach(async () => {
@@ -17,6 +18,7 @@ afterEach(async () => {
 
 async function fixture(
   options: Parameters<typeof createFakeRelayV2>[0] = { users: { jwt: "user" } },
+  tokenOverride?: (signal: AbortSignal) => Promise<string>,
 ) {
   const relay = await createFakeRelayV2(options);
   cleanups.push(() => relay.close());
@@ -32,10 +34,14 @@ async function fixture(
   const states: string[] = [];
   const stateEvents = new EventEmitter();
   const errors: Error[] = [];
+  const onSendReady = vi.fn();
+  const getToken = vi.fn(
+    tokenOverride ?? ((signal) => createWebRemoteControlV2Http(relay.httpUrl).token("jwt", signal)),
+  );
   const transport = new WebRemoteControlDeviceTransport({
     relayWsUrl: relay.wsUrl,
     deviceMid: "mid-1",
-    getToken: (signal) => createWebRemoteControlV2Http(relay.httpUrl).token("jwt", signal),
+    getToken,
     resolveDeviceSid: async () => device.device_sid,
     meta: { name: "My desktop", platform: "darwin", version: "3.13.0" },
     logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -45,6 +51,7 @@ async function fixture(
     },
     onError: (error) => errors.push(error),
     onPayload: vi.fn(),
+    onSendReady,
   });
   cleanups.push(() => transport.dispose());
   // 真实 HTTP/WebSocket 不随 fake clock 完成；等状态事件，避免固定延时在负载下抢跑。
@@ -52,7 +59,7 @@ async function fixture(
     if (states.at(-1) !== state)
       await once(stateEvents, `state:${state}`, { signal: AbortSignal.timeout(5000) });
   };
-  return { relay, transport, states, errors, device, request, waitForState };
+  return { relay, transport, states, errors, device, request, waitForState, getToken, onSendReady };
 }
 
 async function settle() {
@@ -60,6 +67,135 @@ async function settle() {
 }
 
 describe("desktop relay V2 transport", () => {
+  it("已认证等待socket跨两次300秒到期只重取token，不注册新SID", async () => {
+    const h = await fixture();
+    h.transport.start();
+    await h.waitForState("waiting_terminal");
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    for (let cycle = 0; cycle < 2; cycle++) {
+      vi.setSystemTime(Date.now() + 300_000);
+      h.relay.sendError({ role: "device" }, "AUTH_FAILED");
+      await h.waitForState("connecting");
+      await vi.advanceTimersByTimeAsync(0);
+      await h.waitForState("waiting_terminal");
+    }
+    expect(h.getToken).toHaveBeenCalledTimes(3);
+    expect(h.errors).toEqual([]);
+    expect(h.relay.httpCalls.filter((call) => call.path.endsWith("/device"))).toHaveLength(1);
+    expect(
+      new Set(
+        h.relay.messages
+          .map(({ message }) => (message as { device_sid?: string }).device_sid)
+          .filter(Boolean),
+      ),
+    ).toEqual(new Set([h.device.device_sid]));
+  });
+
+  it("续签成功后60秒内再次AUTH_FAILED终止，不重新注册或无限重连", async () => {
+    const h = await fixture();
+    h.transport.start();
+    await h.waitForState("waiting_terminal");
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    h.relay.sendError({ role: "device" }, "AUTH_FAILED");
+    await h.waitForState("connecting");
+    await vi.advanceTimersByTimeAsync(0);
+    await h.waitForState("waiting_terminal");
+    h.relay.sendError({ role: "device" }, "AUTH_FAILED");
+    await h.waitForState("error");
+    await vi.advanceTimersByTimeAsync(300_000);
+    expect(h.getToken).toHaveBeenCalledTimes(2);
+    expect(h.errors).toHaveLength(1);
+    expect(h.relay.httpCalls.filter((call) => call.path.endsWith("/device"))).toHaveLength(1);
+  });
+
+  it("续签握手AUTH_FAILED终止，不能落入首次SID重注册分支", async () => {
+    let rejectHandshake = false;
+    const h = await fixture({
+      users: { jwt: "user" },
+      onMessage: ({ message }) =>
+        rejectHandshake && (message as { type: string }).type === "auth_init"
+          ? { error: "AUTH_FAILED" }
+          : undefined,
+    });
+    h.transport.start();
+    await h.waitForState("waiting_terminal");
+    rejectHandshake = true;
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    h.relay.sendError({ role: "device" }, "AUTH_FAILED");
+    await h.waitForState("connecting");
+    await vi.advanceTimersByTimeAsync(0);
+    await h.waitForState("error");
+    expect(h.getToken).toHaveBeenCalledTimes(2);
+    expect(h.relay.httpCalls.filter((call) => call.path.endsWith("/device"))).toHaveLength(1);
+  });
+
+  it("续签HTTP401终止，不继续尝试根授权", async () => {
+    const h = await fixture();
+    h.transport.start();
+    await h.waitForState("waiting_terminal");
+    h.getToken.mockRejectedValueOnce(new WebRemoteControlV2ConnectionError("auth-required"));
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    h.relay.sendError({ role: "device" }, "AUTH_FAILED");
+    await h.waitForState("connecting");
+    await vi.advanceTimersByTimeAsync(0);
+    await h.waitForState("error");
+    expect(h.errors).toEqual([expect.objectContaining({ reason: "auth-required" })]);
+    h.transport.dispose();
+    await vi.advanceTimersByTimeAsync(300_000);
+    expect(h.getToken).toHaveBeenCalledTimes(2);
+  });
+
+  it("dispose之后迟到续签token不能创建socket或复活旧身份", async () => {
+    const h = await fixture();
+    h.transport.start();
+    await h.waitForState("waiting_terminal");
+    let finish!: (token: string) => void;
+    h.getToken.mockImplementationOnce(() => new Promise((resolve) => (finish = resolve)));
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    h.relay.sendError({ role: "device" }, "AUTH_FAILED");
+    await h.waitForState("connecting");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.getToken).toHaveBeenCalledTimes(2);
+    h.transport.dispose();
+    finish("late-one-use-token");
+    await settle();
+    expect(h.states.at(-1)).toBe("idle");
+    expect(
+      h.relay.messages.filter(({ message }) => (message as { type: string }).type === "auth_init"),
+    ).toHaveLength(1);
+  });
+
+  it("paired续签沿用SID并报告reconnected-socket，任务payload只发一次", async () => {
+    const h = await fixture();
+    const pair = async () => {
+      const { data } = await h.request("token", { role: "terminal" });
+      const socket = new WebSocket(`${h.relay.wsUrl}?token=${data.token}&mid=mid-1`);
+      cleanups.push(() => socket.close());
+      const received: unknown[] = [];
+      socket.on("message", (raw) => received.push(JSON.parse(raw.toString())));
+      await once(socket, "open");
+      socket.send(JSON.stringify({ type: "auth_init", device_sid: h.device.device_sid }));
+      await h.waitForState("paired");
+      return received;
+    };
+    h.transport.start();
+    await h.waitForState("waiting_terminal");
+    await pair();
+    h.relay.sendError({ role: "device" }, "AUTH_FAILED");
+    await h.waitForState("connecting");
+    await h.waitForState("waiting_terminal");
+    const received = await pair();
+    expect(h.onSendReady).toHaveBeenCalledWith({ kind: "reconnected-socket" });
+    const payload = {
+      zcode_type: "bootstrap-request" as const,
+      requestId: "same-task-after-renewal",
+    };
+    expect(h.transport.sendPayload(payload)).toBe(true);
+    await vi.waitFor(() =>
+      expect(received.filter((m) => (m as { type: string }).type === "data")).toHaveLength(1),
+    );
+    expect(h.errors).toEqual([]);
+  });
   it("用一次性 token 认证，auth_init 仅发送 V2 字段与秒级时间戳", async () => {
     const { relay, transport, states, device } = await fixture();
     transport.start();

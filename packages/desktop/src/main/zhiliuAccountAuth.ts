@@ -555,6 +555,13 @@ export function createZhiliuAccountAuth(options: ZhiliuAccountAuthOptions) {
     relayStarting = operation;
     try {
       return await operation;
+    } catch (error) {
+      // 续签根授权被撤销时必须进入既有清理屏障，不能被 transport 当作网络故障重试。
+      if (error instanceof ZhiliuAccountHttpError && [401, 403].includes(error.status)) {
+        await invalidate(record, epoch);
+        return undefined;
+      }
+      throw error;
     } finally {
       if (relayStarting === operation) relayStarting = undefined;
     }

@@ -271,6 +271,21 @@ describe("织流 Main 浏览器账号所有者", () => {
     await h.auth.logout();
     expect(await h.auth.authorizeRelay()).toBeUndefined();
   });
+  it.each([401, 403])("relay续签根HTTP%s清理账号和Host，下一次不再签发", async (status) => {
+    const h = fixture(true),
+      original = h.http.getMockImplementation()!;
+    h.http.mockImplementation(async (url, init) =>
+      String(url).endsWith("/relay-grants") ? h.response(null, status) : original(url, init),
+    );
+    expect(await h.auth.authorizeRelay()).toBeUndefined();
+    expect(h.auth.status().phase).toBe("logged_out");
+    expect(h.options.pauseComputer).toHaveBeenCalledOnce();
+    expect(h.options.disconnectComputer).toHaveBeenCalledOnce();
+    expect(h.store.remove).toHaveBeenCalledWith(origin);
+    const requests = h.http.mock.calls.length;
+    expect(await h.auth.authorizeRelay()).toBeUndefined();
+    expect(h.http).toHaveBeenCalledTimes(requests);
+  });
   it("logs in through the system browser without starting a directory connection or exposing secrets to UI", async () => {
     const h = fixture();
     const result = await h.auth.login();

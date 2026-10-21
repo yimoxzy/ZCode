@@ -28,6 +28,8 @@ import type {
   WebRemoteControlDeviceTransportOptions,
 } from "#src/main/web-remote-relay/contract.js";
 
+const AUTH_RECOVERY_WINDOW_MS = 60_000;
+
 function rawBytes(raw: RawData): Buffer {
   return Array.isArray(raw)
     ? Buffer.concat(raw)
@@ -44,6 +46,8 @@ export class WebRemoteControlDeviceTransport {
   private connectAttempt = 0;
   private deviceSid?: string;
   private authenticated = false;
+  private authorizationRecoveryAt?: number;
+  private authorizationRecoveryPending = false;
   private registrationRetried = false;
   private registrationPending = false;
   private reconnectTimer?: ReturnType<typeof setTimeout>;
@@ -182,7 +186,19 @@ export class WebRemoteControlDeviceTransport {
         } else this.scheduleReconnect(delay);
       } else if (
         message.code === "AUTH_FAILED" &&
+        this.authenticated &&
+        (this.authorizationRecoveryAt === undefined ||
+          Date.now() - this.authorizationRecoveryAt >= AUTH_RECOVERY_WINDOW_MS)
+      ) {
+        // rc_ 在活跃/等待 socket 上到期也会发 AUTH_FAILED；只轮换 transport，保留 Host。
+        // wire 不区分撤销，故每分钟限一次；新 token HTTP/握手失败必须终止授权恢复。
+        this.authorizationRecoveryAt = Date.now();
+        this.authorizationRecoveryPending = true;
+        this.scheduleReconnect(0);
+      } else if (
+        message.code === "AUTH_FAILED" &&
         this.state === "authenticating" &&
+        !this.authorizationRecoveryPending &&
         !this.registrationRetried
       ) {
         this.registrationRetried = true;
@@ -200,6 +216,7 @@ export class WebRemoteControlDeviceTransport {
       if (this.state !== "authenticating" || message.device_sid !== this.deviceSid) return;
       clearTimeout(this.handshakeTimer);
       this.authenticated = true;
+      this.authorizationRecoveryPending = false;
       this.retry.acknowledged();
     }
     if (!this.authenticated) return;

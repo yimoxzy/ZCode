@@ -89,10 +89,11 @@ function controlledTransport() {
   }
   const states: string[] = [];
   const failures: unknown[] = [];
+  const getToken = vi.fn(async () => "one-use");
   const transport = new WebRemoteControlTerminalTransport({
     relayWsUrl: "wss://relay.example/api/v1/remote/ws2",
     deviceSid: "sid",
-    getToken: async () => "one-use",
+    getToken,
     WebSocketCtor: FakeSocket as unknown as typeof WebSocket,
     heartbeatAckTimeoutMs: 60000,
     onPayload: vi.fn(),
@@ -102,10 +103,73 @@ function controlledTransport() {
     reloadPage: vi.fn(),
   });
   cleanup.push(() => transport.dispose());
-  return { transport, sockets, states, failures };
+  return { transport, sockets, states, failures, getToken };
 }
 
 describe("terminal 与 V2 假 relay 的线级契约", () => {
+  it("后台错过续签后已认证Web跨两次300秒换socket，保留同一SID", async () => {
+    vi.useFakeTimers();
+    const h = controlledTransport();
+    h.transport.start();
+    await vi.advanceTimersByTimeAsync(0);
+    for (let cycle = 0; cycle < 3; cycle++) {
+      const socket = h.sockets[cycle]!;
+      socket.open();
+      socket.receive({ type: "auth_ack", device_sid: "sid", pair_status: "matched" });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(h.states.at(-1)).toBe("paired");
+      if (cycle === 2) break;
+      vi.setSystemTime(Date.now() + 300_000);
+      socket.receive({ type: "error", code: "AUTH_FAILED" });
+      await vi.advanceTimersByTimeAsync(0);
+    }
+    expect(h.getToken).toHaveBeenCalledTimes(3);
+    expect(h.failures).toEqual([]);
+    expect(
+      h.sockets.every((s) =>
+        s.send.mock.calls.some(([body]) => JSON.parse(body).device_sid === "sid"),
+      ),
+    ).toBe(true);
+  });
+
+  it("Web续签握手再次失败立即终止，旧socketACK不能恢复", async () => {
+    vi.useFakeTimers();
+    const h = controlledTransport();
+    h.transport.start();
+    await vi.advanceTimersByTimeAsync(0);
+    const first = h.sockets[0]!;
+    first.open();
+    first.receive({ type: "auth_ack", device_sid: "sid", pair_status: "matched" });
+    await vi.advanceTimersByTimeAsync(0);
+    first.receive({ type: "error", code: "AUTH_FAILED" });
+    await vi.advanceTimersByTimeAsync(0);
+    const second = h.sockets[1]!;
+    second.open();
+    second.receive({ type: "error", code: "AUTH_FAILED" });
+    first.receive({ type: "auth_ack", device_sid: "sid", pair_status: "matched" });
+    await vi.advanceTimersByTimeAsync(300_000);
+    expect(h.getToken).toHaveBeenCalledTimes(2);
+    expect(h.failures).toEqual([expect.objectContaining({ reason: "device-not-owned" })]);
+    expect(h.states.at(-1)).toBe("error");
+  });
+
+  it("Web续签ACK不能重置60秒AUTH_FAILED预算", async () => {
+    vi.useFakeTimers();
+    const h = controlledTransport();
+    h.transport.start();
+    await vi.advanceTimersByTimeAsync(0);
+    for (const index of [0, 1]) {
+      const socket = h.sockets[index]!;
+      socket.open();
+      socket.receive({ type: "auth_ack", device_sid: "sid", pair_status: "matched" });
+      await vi.advanceTimersByTimeAsync(0);
+      socket.receive({ type: "error", code: "AUTH_FAILED" });
+      await vi.advanceTimersByTimeAsync(0);
+    }
+    expect(h.getToken).toHaveBeenCalledTimes(2);
+    expect(h.states.at(-1)).toBe("error");
+    expect(h.failures).toHaveLength(1);
+  });
   it("缺少 AbortSignal 静态 API 仍只取一次 token 并实际配对、透传 bootstrap", async () => {
     const h = await fixture();
     const descriptors = Object.getOwnPropertyDescriptors(AbortSignal);
