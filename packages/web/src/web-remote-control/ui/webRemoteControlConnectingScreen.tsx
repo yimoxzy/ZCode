@@ -95,7 +95,7 @@ export function WebRemoteControlLoadingScreen({
   return (
     <div className="flex h-dvh min-h-dvh w-screen flex-col bg-background px-4 pt-[calc(env(safe-area-inset-top)+12px)] text-foreground">
       <div className="flex h-10 items-center">
-        <WebRemoteControlBrand />
+        <WebRemoteControlBrand locale={locale} />
       </div>
       <div
         role="status"

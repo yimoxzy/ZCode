@@ -1,6 +1,6 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { WebRemoteControlRelayV2Device } from "@zcode/shared/web-remote-relay";
 import type {
   WebRemoteControlDeviceGroup,
@@ -13,6 +13,11 @@ import {
 } from "#src/web-remote-control/views.js";
 
 const actions = { onSelect: () => {}, onRefresh: () => {}, onSwitchAccount: () => {} };
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.resetModules();
+});
 
 const connection = (
   sid: string,
@@ -57,6 +62,49 @@ function render(
 }
 
 describe("连接前设备列表", () => {
+  it.each(["zh-CN", "en-US"] as const)(
+    "%s 织流构建只替换应用品牌，保留用户命名",
+    async (locale) => {
+      vi.stubGlobal("__ZHILIU_DESKTOP_ENABLED__", true);
+      vi.resetModules();
+      const managed = await import("#src/web-remote-control/views.js");
+      const productName = locale === "zh-CN" ? "织流" : "Zhiliu";
+      const device = { ...mac, name: "ZCode 用户电脑" };
+      const html = renderToStaticMarkup(
+        createElement(managed.WebRemoteControlDeviceListPage, {
+          ...actions,
+          locale,
+          view: {
+            kind: "devices",
+            loading: false,
+            error: false,
+            devices: [device],
+            account: { displayName: "ZCode 用户", provider: "bigmodel" },
+          },
+        }),
+      );
+      expect(html).toContain('data-app-logo="zhiliu"');
+      expect(html).toContain(`>${productName}</span>`);
+      expect(html).toContain(`${productName} 3.15.0`);
+      expect(html).toContain(locale === "zh-CN" ? "在电脑端 织流 登录" : "Sign in to Zhiliu");
+      expect(html).toContain("ZCode 用户电脑");
+      expect(html).toContain("ZCode 用户");
+      expect(html).not.toContain("BigModel");
+      expect(html).not.toContain("Z.ai");
+      const connections = renderToStaticMarkup(
+        createElement(managed.WebRemoteControlConnectionList, {
+          device,
+          locale,
+          disabled: false,
+          now: 0,
+          onSelect: () => {},
+        }),
+      );
+      expect(connections).toContain(`${productName} 3.15.0`);
+      expect(connections).not.toContain("ZCode");
+    },
+  );
+
   it.each(["zh-CN", "en-US"] as const)(
     "%s 按在线/离线分组，显示平台与版本，离线禁用且默认不显示设备 ID",
     (locale) => {

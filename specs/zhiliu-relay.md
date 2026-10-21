@@ -25,6 +25,8 @@ WS完全复用auth*init、pair_status_query、data与auth_ack、pair_status_ack�
 
 ### 织流网页终端身份适配
 
+认证适配器由既有编译期开关 `ZHILIU_DESKTOP=1`（`ZHILIU_DESKTOP_ENABLED`）选择，不能由 URL、存储字段或服务端返回值切换。织流构建的远控只实例化并使用 SaaS terminal grant adapter；`/remote/v4` 上的官方 `state/code/authCode/error` 参数不得触发官方 OAuth callback，未登录仍走同源织流登录且返回地址移除这些参数。标准上游构建继续使用原 `WebAuthService`、登录页、回调 admission 与 dev-return 配置，不创建或请求织流授权。两种构建均复用同一个 V4 Entry 和恢复链路，不新增任务 owner。回归需同时验证上游回调/bridge 恢复，以及织流忽略本地旧 OAuth/native 凭据、仅以 SaaS Bearer 换取内存 terminal `rc_`；`dl_`、URL token 和官方 JWT 不能进入 relay 请求。
+
 `packages/web` 保留原 V4 Entry、设备列表、bridgeSession、taskView、replay 和 Host attachment；不创建新 Agent。当前 SaaS 源码采用 sessionStorage `access_token/refresh_token` 加 HTTP Bearer，尚无 Cookie/CSRF 认证；本次沿用这一事实，不另造 Cookie 认证。织流 `/remote/v4` 以同标签页、同源现有 access*token 调用 `POST /api/desktop-relay/terminal-grants`，请求体为空对象，不接收 URL/body 中的 user/space 身份。响应严格校验 `protocol_version, relay_grant, expires_at, principal_id, desktop_device_id` 五字段，拒绝过期和非法 scope。`rc*`由 HTTP adapter 单一持有，仅存内存；Entry 使用 legacy`getZCodeJwtToken`端口传递此短期 relay 凭据，但不接入官方 OAuth、用户 Key 或本地 OAuth 仓库。access_token 过期仅通过原`/api/auth/refresh` 语义轮换已有 sessionStorage 字段，迟到 refresh 不可覆盖已退出/切换的 session。
 
 adapter 在过期前 30 秒刷新，单请求在途且用代次丢弃 logout/dispose 后的迟到响应。相同 `principal_id` 和目标设备换凭据时，通过原 transport 的 suspend/recoverInBackground 关闭旧 socket、取新一次性 token、恢复既有 replayable attachment；不卸载任务 UI、不复制待执行队列。principal/目标设备变更必须撤销 Entry 导航代次并重新 admission，不能把旧设备列表/任务留给新空间。401 仅尝试一次原刷新端点；仍失败或 403 清内存授权并引导同源织流登录；网络故障不继续使用已失效凭据，原 transport 负责重连退避，服务端仍每 5 秒校验根授权。

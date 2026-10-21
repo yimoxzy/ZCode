@@ -34,6 +34,7 @@ import {
 } from "@zcode/client";
 
 import { WebCallbackPage } from "./auth/WebCallbackPage.js";
+import { WebLoginPage } from "./auth/WebLoginPage.js";
 import { createWebAuthService } from "./auth/webAuthService.js";
 import { WEB_ZAI_OAUTH_CONFIG, resolveWebAuthDevReturnTo } from "./auth/webZaiOAuthConfig.js";
 import { parseOAuthState, resolveSafeAppReturnTo } from "./auth/oauthStateCodec.js";
@@ -230,15 +231,18 @@ async function resolveFeedbackUrl(): Promise<string | undefined> {
 installDocumentHiddenMotionPause();
 const root = createRoot(document.getElementById("root")!);
 const webAuthService = createWebAuthService();
-const zhiliuRelayAuth = new ZhiliuWebRelayAuth({
-  origin: window.location.origin,
-  storage: {
-    getItem: (key) => window.sessionStorage.getItem(key),
-    setItem: (key, value) => window.sessionStorage.setItem(key, value),
-    removeItem: (key) => window.sessionStorage.removeItem(key),
-  },
-  navigate: (url) => window.location.assign(url),
-});
+// 认证来源必须跟随编译期产品身份；织流接入不能替换标准上游构建的 OAuth 契约。
+const zhiliuRelayAuth = ZHILIU_DESKTOP_ENABLED
+  ? new ZhiliuWebRelayAuth({
+      origin: window.location.origin,
+      storage: {
+        getItem: (key) => window.sessionStorage.getItem(key),
+        setItem: (key, value) => window.sessionStorage.setItem(key, value),
+        removeItem: (key) => window.sessionStorage.removeItem(key),
+      },
+      navigate: (url) => window.location.assign(url),
+    })
+  : undefined;
 let isPageUnloading = false;
 
 // 初始化 Web 端流式 clientId，确保所有 hook 在首次渲染前就使用稳定 ID
@@ -248,7 +252,7 @@ let isPageUnloading = false;
 
 window.addEventListener("beforeunload", () => {
   isPageUnloading = true;
-  zhiliuRelayAuth.dispose();
+  zhiliuRelayAuth?.dispose();
 });
 
 interface WebRemoteControlPlatformProxy {
@@ -304,10 +308,11 @@ function renderWebRemoteControlFailure(failure: WebRemoteControlFailure): void {
 
 function isWebOAuthCallback(params: URLSearchParams): boolean {
   return (
-    ["/cn/share/callback", "/share/callback"].includes(window.location.pathname) &&
-    params.has("state") &&
-    // BigModel 的 authCode 要先进入回调页，才能由 provider 归一化为 code。
-    (params.has("code") || params.has("authCode") || params.has("error"))
+    (!ZHILIU_DESKTOP_ENABLED && isWebRemoteControlOAuthCallback(new URL(window.location.href))) ||
+    (["/cn/share/callback", "/share/callback"].includes(window.location.pathname) &&
+      params.has("state") &&
+      // BigModel 的 authCode 要先进入回调页，才能由 provider 归一化为 code。
+      (params.has("code") || params.has("authCode") || params.has("error")))
   );
 }
 
@@ -406,8 +411,13 @@ async function renderConversationSharePage(): Promise<void> {
 }
 
 function renderWebLoginPage(): void {
-  document.title = "织流 - 登录";
-  zhiliuRelayAuth.startLogin({ appReturnTo: window.location.href });
+  if (zhiliuRelayAuth) {
+    document.title = "织流 - 登录";
+    zhiliuRelayAuth.startLogin({ appReturnTo: window.location.href });
+    return;
+  }
+  document.title = "ZCode - Web Remote Control Sign In";
+  root.render(<WebLoginPage onLogin={(provider) => remoteEntry.startLogin(provider)} />);
 }
 
 // 访问 window.localStorage 本身在部分浏览器会抛错，统一包在方法里交给调用方兜底。
@@ -417,7 +427,7 @@ const webRemoteControlStorage: Pick<Storage, "getItem" | "setItem"> = {
 };
 
 const remoteEntry = new WebRemoteControlEntry({
-  auth: zhiliuRelayAuth,
+  auth: zhiliuRelayAuth ?? webAuthService,
   getHref: () => window.location.href,
   replaceHref: (href) => window.history.replaceState(window.history.state, "", href),
   storage: webRemoteControlStorage,
@@ -430,6 +440,9 @@ const remoteEntry = new WebRemoteControlEntry({
     document.addEventListener("visibilitychange", onVisibilityChange);
     return () => document.removeEventListener("visibilitychange", onVisibilityChange);
   },
+  ...(!ZHILIU_DESKTOP_ENABLED
+    ? { loginOptions: { devReturnTo: resolveWebAuthDevReturnTo(WEB_ZAI_OAUTH_CONFIG) } }
+    : {}),
   token: createWebRemoteControlV2TokenClient(window.location.origin),
   connect: (connection) => {
     void bootstrapExternalRelayWebRemoteControl(connection);
@@ -438,7 +451,7 @@ const remoteEntry = new WebRemoteControlEntry({
     if (view.kind === "callback") renderWebAuthCallbackPage();
     else if (view.kind === "login") renderWebLoginPage();
     else if (view.kind === "devices") {
-      document.title = "织流 - 远程设备";
+      document.title = ZHILIU_DESKTOP_ENABLED ? "织流 - 远程设备" : "ZCode - Web Remote Control";
       root.render(
         <WebRemoteControlDeviceListPage
           view={view}

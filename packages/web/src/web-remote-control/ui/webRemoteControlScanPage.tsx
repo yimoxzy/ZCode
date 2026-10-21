@@ -5,7 +5,7 @@ export function WebRemoteControlScanPage({ locale }: { locale: "zh-CN" | "en-US"
   return (
     <main className="flex min-h-dvh items-center justify-center bg-background px-4 py-8 text-foreground">
       <section className="w-full max-w-sm rounded-xl border border-card-border bg-card p-5 shadow-sm">
-        <WebRemoteControlBrand className="mb-2" />
+        <WebRemoteControlBrand className="mb-2" locale={locale} />
         <h1 className="text-ui-lg font-medium">
           {zh ? "请扫描桌面二维码" : "Scan the desktop QR code"}
         </h1>

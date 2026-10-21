@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { ZHILIU_DESKTOP_ENABLED } from "@zcode/shared";
 import { ChevronRightIcon, LaptopIcon, RefreshCwIcon } from "lucide-react";
 import { Button } from "@zcode/ui/button";
 import { DevicePlatformIcon, getDevicePlatformLabel } from "@zcode/ui/device-platform-icon";
@@ -18,6 +19,7 @@ import { WebRemoteControlSwitchAccountDialog } from "#src/web-remote-control/ui/
 
 const copyByLocale = {
   "zh-CN": {
+    productName: ZHILIU_DESKTOP_ENABLED ? "织流" : "ZCode",
     title: "选择电脑",
     switchAccount: "切换",
     switchAccountFallback: "切换账号",
@@ -27,12 +29,13 @@ const copyByLocale = {
     offline: "离线",
     unnamed: "未命名设备",
     connections: (count: number) => `${count} 个连接`,
-    notFound: "没看到你的电脑？在电脑端 ZCode 登录同一账号并开启远程控制，然后刷新。",
+    notFound: `没看到你的电脑？在电脑端 ${ZHILIU_DESKTOP_ENABLED ? "织流" : "ZCode"} 登录同一账号并开启远程控制，然后刷新。`,
     emptyTitle: "暂无设备",
     emptyDescription: "在电脑端登录同一账号并开启 Web 远程控制，然后刷新列表。",
     error: "无法加载设备，请检查网络后刷新。",
   },
   "en-US": {
+    productName: ZHILIU_DESKTOP_ENABLED ? "Zhiliu" : "ZCode",
     title: "Choose a computer",
     switchAccount: "Switch",
     switchAccountFallback: "Switch account",
@@ -42,8 +45,7 @@ const copyByLocale = {
     offline: "Offline",
     unnamed: "Unnamed device",
     connections: (count: number) => `${count} connections`,
-    notFound:
-      "Don't see your computer? Sign in to ZCode on it with the same account, turn on remote control, then refresh.",
+    notFound: `Don't see your computer? Sign in to ${ZHILIU_DESKTOP_ENABLED ? "Zhiliu" : "ZCode"} on it with the same account, turn on remote control, then refresh.`,
     emptyTitle: "No devices yet",
     emptyDescription:
       "Sign in with the same account on your computer, enable Web remote control, then refresh this list.",
@@ -101,7 +103,7 @@ function describeDevice(
   const single = device.onlineConnections.length === 1 ? device.onlineConnections[0] : undefined;
   const version = single?.meta.version?.trim();
   const parts = online
-    ? [platform, version ? `ZCode ${version}` : undefined]
+    ? [platform, version ? `${copy.productName} ${version}` : undefined]
     : [platform, copy.offline];
   const filtered = parts.filter((part): part is string => Boolean(part));
   if (filtered.length === 0) filtered.push(online ? copy.online : copy.offline);
@@ -220,7 +222,8 @@ function AccountRow({
         </span>
       )}
       <span className="min-w-0 truncate">
-        {account.displayName} · {PROVIDER_LABELS[account.provider]}
+        {account.displayName}
+        {!ZHILIU_DESKTOP_ENABLED ? ` · ${PROVIDER_LABELS[account.provider]}` : null}
       </span>
       {switchButton(copy.switchAccount)}
     </div>
@@ -253,7 +256,7 @@ export function WebRemoteControlDeviceListPage({
     <main className="h-dvh overflow-y-auto bg-background text-foreground">
       <div className="mx-auto w-full max-w-md px-4 pb-10 pt-[calc(env(safe-area-inset-top)+12px)]">
         <div className="flex h-10 items-center">
-          <WebRemoteControlBrand />
+          <WebRemoteControlBrand locale={locale} />
         </div>
         <div className="mt-3 flex items-center justify-between gap-3">
           <h1 className="text-ui-xl font-semibold">{copy.title}</h1>

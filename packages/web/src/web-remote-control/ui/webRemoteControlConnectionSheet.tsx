@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { ZHILIU_DESKTOP_ENABLED } from "@zcode/shared";
 import { ChevronRightIcon } from "lucide-react";
 import type { WebRemoteControlRelayV2Device } from "@zcode/shared/web-remote-relay";
 import {
@@ -16,15 +17,18 @@ import type { WebRemoteControlScreenLocale } from "#src/web-remote-control/domai
 
 const copyByLocale = {
   "zh-CN": {
+    productName: ZHILIU_DESKTOP_ENABLED ? "织流" : "ZCode",
     unnamed: "未命名设备",
-    sheetDescription: (count: number) => `这台电脑上有 ${count} 个 ZCode 在线，选择要连接的一个`,
+    sheetDescription: (count: number) =>
+      `这台电脑上有 ${count} 个 ${ZHILIU_DESKTOP_ENABLED ? "织流" : "ZCode"} 在线，选择要连接的一个`,
     startedAgo: (relative: string) => `${relative}启动`,
     cancel: "取消",
   },
   "en-US": {
+    productName: ZHILIU_DESKTOP_ENABLED ? "Zhiliu" : "ZCode",
     unnamed: "Unnamed device",
     sheetDescription: (count: number) =>
-      `${count} ZCode instances are online on this computer. Choose one.`,
+      `${count} ${ZHILIU_DESKTOP_ENABLED ? "Zhiliu" : "ZCode"} instances are online on this computer. Choose one.`,
     startedAgo: (relative: string) => `started ${relative}`,
     cancel: "Cancel",
   },
@@ -123,8 +127,8 @@ export function WebRemoteControlConnectionList({
           >
             <span className="block truncate text-ui-base font-medium">
               {connection.meta.version?.trim()
-                ? `ZCode ${connection.meta.version.trim()}`
-                : "ZCode"}
+                ? `${copy.productName} ${connection.meta.version.trim()}`
+                : copy.productName}
             </span>
             <span className="mt-0.5 block truncate text-ui-sm text-foreground-subtle">
               {copy.startedAgo(formatRelativeTime(connection.created_at, locale, now))}

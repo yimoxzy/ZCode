@@ -21,6 +21,7 @@ const testState = vi.hoisted(() => ({
     dispose: ReturnType<typeof vi.fn>;
   }>,
   transportOptions: [] as Array<{
+    getToken(signal: AbortSignal): Promise<string>;
     onPayload(payload: WebRemoteControlAppPayload): void;
     onRawTransportPayload?(payload: unknown): boolean;
     onSendReady?(event: { kind: "same-socket" | "reconnected-socket" }): void;
@@ -242,7 +243,10 @@ vi.mock("#src/web-remote-control/adapters/webRemoteControlTransport.js", async (
   };
 });
 
-function setupExternalRelayGlobals(pathname = "/remote") {
+function setupExternalRelayGlobals(
+  pathname = "/remote",
+  search = "?sid=sid-1&mid=mid-1&app_version=1.0.0",
+) {
   const documentListeners = new Map<string, Array<() => void>>();
   const windowListeners = new Map<string, Array<() => void>>();
   const addListener = (
@@ -307,9 +311,10 @@ function setupExternalRelayGlobals(pathname = "/remote") {
     location: {
       origin: "https://zcode.z.ai",
       pathname,
-      href: `https://zcode.z.ai${pathname}?sid=sid-1&mid=mid-1&app_version=1.0.0`,
+      href: `https://zcode.z.ai${pathname}${search}`,
+      assign: navigateMock,
       replace: navigateMock,
-      search: "?sid=sid-1&mid=mid-1&app_version=1.0.0",
+      search,
       reload: reloadMock,
     },
   });
@@ -326,6 +331,7 @@ function setupExternalRelayGlobals(pathname = "/remote") {
   });
 
   return {
+    storage,
     setVisibilityState(visibilityState: "visible" | "hidden") {
       documentStub.visibilityState = visibilityState;
     },
@@ -366,6 +372,82 @@ describe("external relay frame gap recovery", () => {
     navigateMock.mockClear();
     noticeMock.mockClear();
   });
+
+  it("managed Web uses only the SaaS Bearer and terminal grant through the real entry", async () => {
+    vi.stubGlobal("__ZHILIU_DESKTOP_ENABLED__", true);
+    vi.resetModules();
+    const lifecycle = setupExternalRelayGlobals("/remote/v4");
+    lifecycle.storage.setItem("access_token", "saas-access");
+    lifecycle.storage.setItem("zcodejwttoken", "dl_native-do-not-forward");
+    const writes = vi.spyOn(lifecycle.storage, "setItem");
+    const relayGrant = `rc_${"a".repeat(64)}`;
+    const socketToken = "A".repeat(22);
+    const fetcher = vi.fn<typeof fetch>(async (input) => {
+      const path = new URL(String(input)).pathname;
+      if (path === "/api/desktop-relay/terminal-grants")
+        return Response.json({
+          protocol_version: 1,
+          relay_grant: relayGrant,
+          expires_at: new Date(Date.now() + 300_000).toISOString(),
+          principal_id: "11111111-1111-4111-8111-111111111111:22222222-2222-4222-8222-222222222222",
+          desktop_device_id: null,
+        });
+      if (path === "/api/v1/remote/token")
+        return Response.json({ code: 0, msg: "", data: { token: socketToken, expires_in: 60 } });
+      throw new Error(`Unexpected test endpoint: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetcher);
+    try {
+      await import("../src/main.js");
+      await vi.waitFor(() => expect(testState.transportOptions).toHaveLength(1));
+      await expect(
+        testState.transportOptions[0]!.getToken(new AbortController().signal),
+      ).resolves.toBe(socketToken);
+      expect(fetcher).toHaveBeenCalledTimes(2);
+      expect(fetcher.mock.calls[0]![1]).toMatchObject({
+        headers: { Authorization: "Bearer saas-access" },
+        body: "{}",
+      });
+      expect(fetcher.mock.calls[1]![1]).toMatchObject({
+        headers: { Authorization: `Bearer ${relayGrant}` },
+        body: JSON.stringify({ role: "terminal" }),
+      });
+      expect(JSON.stringify(fetcher.mock.calls)).not.toContain("dl_native-do-not-forward");
+      expect(writes.mock.calls.flat()).not.toContain(relayGrant);
+      expect(writes.mock.calls.flat()).not.toContain(socketToken);
+      expect(navigateMock).not.toHaveBeenCalled();
+    } finally {
+      lifecycle.dispatchWindowEvent("beforeunload");
+    }
+  });
+
+  it.each(["authCode=official-code", "code=official-code", "error=access_denied"])(
+    "managed Web ignores official OAuth %s and native credentials without a SaaS session",
+    async (result) => {
+      vi.stubGlobal("__ZHILIU_DESKTOP_ENABLED__", true);
+      vi.resetModules();
+      const lifecycle = setupExternalRelayGlobals(
+        "/remote/v4",
+        `?state=official-state&${result}&sid=sid-1&token=dl_url-do-not-forward`,
+      );
+      lifecycle.storage.setItem("zcodejwttoken", "dl_native-do-not-forward");
+      const fetcher = vi.fn<typeof fetch>();
+      vi.stubGlobal("fetch", fetcher);
+      try {
+        await import("../src/main.js");
+        await vi.waitFor(() => expect(navigateMock).toHaveBeenCalledOnce());
+        const target = new URL(navigateMock.mock.calls[0]![0]);
+        expect(target.origin).toBe("https://zcode.z.ai");
+        expect(target.pathname).toBe("/");
+        expect(target.searchParams.get("next")).toBe("/remote/v4?sid=sid-1");
+        expect(fetcher).not.toHaveBeenCalled();
+        expect(testState.transportOptions).toHaveLength(0);
+        expect(renderMock).not.toHaveBeenCalled();
+      } finally {
+        lifecycle.dispatchWindowEvent("beforeunload");
+      }
+    },
+  );
 
   it("corrects v4 before opening a business bridge", async () => {
     vi.stubEnv("BASE_URL", "/remote/v4/");
